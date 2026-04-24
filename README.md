@@ -60,8 +60,7 @@ With no subcommand, it now defaults to the TUI. `-h` / `--help` still shows help
 Inside the TUI:
 
 - `/`: enter or edit search mode
-- `Tab`: cycle sort column
-- `r`: toggle ascending / descending
+- `Tab`: cycle sort state
 - `i`: install the latest Pages build to `~/.local/bin/ls-cx-ss`
 - `u`: check whether a newer Pages build is available
 - `q`: quit
@@ -90,8 +89,7 @@ ls-cx-ss resume <SESSION_ID>
 - `Home/End`: jump
 - `Left/Right`: pan horizontally
 - `/`: enter or edit search mode
-- `Tab`: cycle sort key
-- `r`: toggle reverse
+- `Tab`: cycle sort state
 - `i`: install to local `~/.local/bin/ls-cx-ss`
 - `u`: check for updates from GitHub Pages
 - `Enter`: resume selected session

@@ -31,6 +31,11 @@ KEY_ESC = 27
 KEY_TAB = 9
 KEY_BACKSPACE_CODES = {curses.KEY_BACKSPACE, 127, 8}
 TUI_SORT_KEYS = ("updated", "created")
+TUI_SORT_STATES = tuple(
+    (key, reverse)
+    for key in TUI_SORT_KEYS
+    for reverse in (key in {"updated", "created"}, key not in {"updated", "created"})
+)
 
 
 @contextmanager
@@ -148,11 +153,16 @@ def sort_label(key: str, reverse: bool) -> str:
     return header_label(key, key, reverse).replace(" ↑", "").replace(" ↓", "")
 
 
-def next_sort_key(current_sort: str, step: int) -> str:
-    if current_sort not in TUI_SORT_KEYS:
-        return TUI_SORT_KEYS[0 if step > 0 else -1]
-    index = TUI_SORT_KEYS.index(current_sort)
-    return TUI_SORT_KEYS[(index + step) % len(TUI_SORT_KEYS)]
+def sort_state_label(key: str, reverse: bool) -> str:
+    return "{0} {1}".format(sort_label(key, reverse), "descending" if reverse else "ascending")
+
+
+def next_sort_state(current_sort: str, reverse: bool, step: int) -> Tuple[str, bool]:
+    current_state = (current_sort, reverse)
+    if current_state not in TUI_SORT_STATES:
+        return TUI_SORT_STATES[0 if step > 0 else -1]
+    index = TUI_SORT_STATES.index(current_state)
+    return TUI_SORT_STATES[(index + step) % len(TUI_SORT_STATES)]
 
 
 def draw_header(
@@ -253,7 +263,7 @@ def draw(
     if search_mode:
         footer = "search mode: type filter  enter done  esc stop editing  backspace delete  ctrl-u clear"
     else:
-        footer = "/ search  enter resume  q/esc quit  tab sort  r reverse  i install  u update  ↑/↓ browse  ←/→ pan"
+        footer = "/ search  enter resume  q/esc quit  tab sort state  i install  u update  ↑/↓ browse  ←/→ pan"
 
     safe_addnstr(stdscr, 0, 0, title, content_width, palette["title"])
     sort_x = min(content_width, display_width(title) + 2)
@@ -407,29 +417,23 @@ def run_picker(
         elif key == curses.KEY_END:
             selected = max(0, len(visible_rows) - 1)
         elif key in ("\t", KEY_TAB):
-            current_sort = next_sort_key(current_sort, 1)
+            current_sort, reverse = next_sort_state(current_sort, reverse, 1)
             selected = 0
             scroll = 0
             horizontal_scroll = 0
-            status = f"Sorted by {sort_label(current_sort, reverse)}."
+            status = "Sorted by {0}.".format(sort_state_label(current_sort, reverse))
         elif key == curses.KEY_BTAB:
-            current_sort = next_sort_key(current_sort, -1)
+            current_sort, reverse = next_sort_state(current_sort, reverse, -1)
             selected = 0
             scroll = 0
             horizontal_scroll = 0
-            status = f"Sorted by {sort_label(current_sort, reverse)}."
+            status = "Sorted by {0}.".format(sort_state_label(current_sort, reverse))
         elif key == curses.KEY_LEFT:
             horizontal_scroll = max(0, horizontal_scroll - max(4, width // 3))
             status = ""
         elif key == curses.KEY_RIGHT:
             horizontal_scroll = min(max_horizontal_scroll, horizontal_scroll + max(4, width // 3))
             status = ""
-        elif key in ("r", "R"):
-            reverse = not reverse
-            selected = 0
-            scroll = 0
-            horizontal_scroll = 0
-            status = f"Sort direction: {'descending' if reverse else 'ascending'}."
         elif key in ("i", "I"):
             try:
                 status = "Fetching {0}...".format(DEFAULT_SCRIPT_URL)

@@ -58,8 +58,7 @@ curl -fsSL https://lxchx.github.io/ls-cx-ss/ls-cx-ss.py | python3 - tui
 在 TUI 里：
 
 - `/`: 进入或编辑搜索模式
-- `Tab`: 切换排序列
-- `r`: 切换升序 / 降序
+- `Tab`: 切换排序状态
 - `i`: 把最新 Pages 版本安装到 `~/.local/bin/ls-cx-ss`
 - `u`: 检查是否有更新
 - `q`: 退出
@@ -88,8 +87,7 @@ ls-cx-ss resume <SESSION_ID>
 - `Home/End`: 跳到首尾
 - `Left/Right`: 左右平移
 - `/`: 进入或编辑搜索模式
-- `Tab`: 切换排序键
-- `r`: 切换倒序
+- `Tab`: 切换排序状态
 - `i`: 安装到本地 `~/.local/bin/ls-cx-ss`
 - `u`: 检查 GitHub Pages 上是否有更新
 - `Enter`: 恢复选中的 session
