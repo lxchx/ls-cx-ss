@@ -27,7 +27,7 @@ KEY_ESC = 27
 KEY_TAB = 9
 KEY_BACKSPACE_CODES = {curses.KEY_BACKSPACE, 127, 8}
 TUI_SORT_KEYS = ("updated", "created")
-APP_VERSION = "0.3.2"
+APP_VERSION = "0.3.3"
 DEFAULT_SCRIPT_URL = "https://lxchx.github.io/ls-cx-ss/ls-cx-ss.py"
 DEFAULT_BIN_DIR = Path("~/.local/bin").expanduser()
 VERSION_RE = re.compile(r'APP_VERSION = "([^"]+)"|__version__ = "([^"]+)"')
@@ -43,7 +43,13 @@ HEADER_LABELS = {
 }
 
 
-@dataclass(slots=True)
+def compat_dataclass(cls):
+    if sys.version_info >= (3, 10):
+        return dataclass(slots=True)(cls)
+    return dataclass(cls)
+
+
+@compat_dataclass
 class SessionRow:
     created_at: datetime
     updated_at: datetime
