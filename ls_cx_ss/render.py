@@ -8,6 +8,7 @@ from ls_cx_ss.timefmt import ago
 
 GUTTER = 2
 MIN_CONVO_WIDTH = 20
+MIN_COLUMN_WIDTH = 3
 HEADER_LABELS = {
     "created": "Created",
     "updated": "Updated",
@@ -106,10 +107,12 @@ def compute_column_widths(
             ),
         )
     reserved = sum(fixed.values()) + (len(fixed) * GUTTER)
-    convo_width = max(
-        max(MIN_CONVO_WIDTH, display_width(header_label("conversation", active_sort, reverse))),
-        total_width - reserved - 1,
-    )
+    if reserved + 1 > total_width:
+        shrink_order = ["cwd", "branch", "session_id", "provider", "updated", "created"]
+        for key in shrink_order:
+            while key in fixed and fixed[key] > MIN_COLUMN_WIDTH and (sum(fixed.values()) + len(fixed) * GUTTER + 1) > total_width:
+                fixed[key] -= 1
+    convo_width = max(1, total_width - (sum(fixed.values()) + len(fixed) * GUTTER))
     return {**fixed, "conversation": convo_width}
 
 

@@ -22,6 +22,7 @@ SORT_KEYS = ("updated", "created", "provider", "branch", "session_id")
 HEAD_SCAN_LINES = 12
 GUTTER = 2
 MIN_CONVO_WIDTH = 20
+MIN_COLUMN_WIDTH = 3
 KEY_ESC = 27
 APP_VERSION = "0.2.0"
 DEFAULT_SCRIPT_URL = "https://lxchx.github.io/ls-cx-ss/ls-cx-ss.py"
@@ -226,10 +227,12 @@ def compute_column_widths(
             ),
         )
     reserved = sum(fixed.values()) + (len(fixed) * GUTTER)
-    convo_width = max(
-        max(MIN_CONVO_WIDTH, display_width(header_label("conversation", active_sort, reverse))),
-        total_width - reserved - 1,
-    )
+    if reserved + 1 > total_width:
+        shrink_order = ["cwd", "branch", "session_id", "provider", "updated", "created"]
+        for key in shrink_order:
+            while key in fixed and fixed[key] > MIN_COLUMN_WIDTH and (sum(fixed.values()) + len(fixed) * GUTTER + 1) > total_width:
+                fixed[key] -= 1
+    convo_width = max(1, total_width - (sum(fixed.values()) + len(fixed) * GUTTER))
     return {**fixed, "conversation": convo_width}
 
 
@@ -458,15 +461,36 @@ def draw_header(
 
     x = 0
     for idx, (key, cell_width) in enumerate(fields):
+        remaining = width - x
+        if remaining <= 0:
+            break
         label = pad_display(header_label(key, sort_key, reverse), cell_width)
         attr = curses.A_BOLD
         if key == sort_key:
             attr |= curses.A_REVERSE
-        stdscr.addnstr(row_y, x, label, max(0, width - x), attr)
+        safe_addnstr(stdscr, row_y, x, label, remaining, attr)
         x += cell_width
         if idx != len(fields) - 1:
-            stdscr.addnstr(row_y, x, " " * GUTTER, max(0, width - x))
+            remaining = width - x
+            if remaining <= 0:
+                break
+            safe_addnstr(stdscr, row_y, x, " " * GUTTER, remaining)
             x += GUTTER
+
+
+def safe_addnstr(stdscr, y: int, x: int, text: str, limit: int, attr: int = 0) -> None:
+    if limit <= 0:
+        return
+    max_y, max_x = stdscr.getmaxyx()
+    if y < 0 or y >= max_y or x < 0 or x >= max_x:
+        return
+    clipped = truncate_display(text, min(limit, max_x - x))
+    if not clipped:
+        return
+    try:
+        stdscr.addnstr(y, x, clipped, min(limit, max_x - x), attr)
+    except curses.error:
+        return
 
 
 def draw(
@@ -485,13 +509,13 @@ def draw(
     height, width = stdscr.getmaxyx()
     title = f"ls-cx-ss v{APP_VERSION}  cwd={os.getcwd()}  rows={len(visible_rows)}/{len(all_rows)}"
     hint = f"/ search  s sort  r reverse  i install  u update  Enter resume  q/Esc quit"
-    stdscr.addnstr(0, 0, truncate_display(title, width - 1), width - 1, curses.A_BOLD)
+    safe_addnstr(stdscr, 0, 0, title, width - 1, curses.A_BOLD)
     meta_row = 1
     if status:
-        stdscr.addnstr(meta_row, 0, truncate_display(status, width - 1), width - 1)
+        safe_addnstr(stdscr, meta_row, 0, status, width - 1)
         meta_row += 1
     if search:
-        stdscr.addnstr(meta_row, 0, truncate_display(f"search: {search}", width - 1), width - 1)
+        safe_addnstr(stdscr, meta_row, 0, f"search: {search}", width - 1)
         meta_row += 1
 
     widths = compute_column_widths(
@@ -507,14 +531,8 @@ def draw(
     list_height = max(1, height - list_top - 1)
     for idx, row in enumerate(visible_rows[scroll : scroll + list_height]):
         attr = curses.A_REVERSE if scroll + idx == selected else curses.A_NORMAL
-        stdscr.addnstr(
-            list_top + idx,
-            0,
-            format_row(row, widths, show_cwd=show_cwd),
-            width - 1,
-            attr,
-        )
-    stdscr.addnstr(height - 1, 0, truncate_display(hint, width - 1), width - 1)
+        safe_addnstr(stdscr, list_top + idx, 0, format_row(row, widths, show_cwd=show_cwd), width - 1, attr)
+    safe_addnstr(stdscr, height - 1, 0, hint, width - 1)
     stdscr.refresh()
 
 
