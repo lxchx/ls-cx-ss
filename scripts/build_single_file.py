@@ -5,7 +5,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 PACKAGE_DIR = ROOT / "ls_cx_ss"
-OUTPUTS = [ROOT / "ls-cx-ss", ROOT / "docs" / "ls-cx-ss.py"]
+OUTPUTS = [ROOT / "docs" / "ls-cx-ss.py"]
 MODULE_ORDER = [
     "ls_cx_ss",
     "ls_cx_ss.model",

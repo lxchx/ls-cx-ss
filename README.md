@@ -1,5 +1,7 @@
 # ls-cx-ss
 
+English | [中文](./README_CN.md)
+
 `ls-cx-ss` is a small local tool for Codex CLI users.
 
 It fills the current gaps in `codex resume` by:
@@ -10,35 +12,24 @@ It fills the current gaps in `codex resume` by:
 - supporting a lightweight TUI picker
 - resuming directly with `codex resume <SESSION_ID>`
 
-## Single-file entry
-
-The repo now includes a self-contained `ls-cx-ss` Python script in the repo root.
-It only uses the standard library, so you can run it directly without installing the package first:
+## Local development
 
 ```bash
-python3 ./ls-cx-ss list
-python3 ./ls-cx-ss tui
-python3 ./ls-cx-ss resume <SESSION_ID>
+python3 -m ls_cx_ss list
+python3 -m ls_cx_ss tui
+python3 -m ls_cx_ss resume <SESSION_ID>
 ```
 
-If you want a command-like entry on Unix shells:
-
-```bash
-chmod +x ./ls-cx-ss
-./ls-cx-ss list
-```
-
-The packaged and single-file entry points are intended to run on Python 3.6+.
+The package entry point and GitHub Pages single-file entry are intended to run on Python 3.6+.
 
 ## Development
 
 The source of truth now lives under `ls_cx_ss/`.
 
 - `ls_cx_ss/`: package-style source modules used during development
-- `./ls-cx-ss`: generated single-file entry for local direct execution
 - `docs/ls-cx-ss.py`: generated single-file entry published through GitHub Pages
 
-The two single-file outputs are generated from the package sources by:
+The Pages single-file output is generated from the package sources by:
 
 ```bash
 python3 scripts/build_single_file.py
@@ -51,9 +42,9 @@ The current generator uses a small loader approach:
 - bootstraps them into `sys.modules`
 - then calls `ls_cx_ss.cli.main()`
 
-So if you want to change behavior, edit `ls_cx_ss/` first, then regenerate the
-single-file outputs. Do not hand-edit `./ls-cx-ss` or `docs/ls-cx-ss.py`
-unless you are debugging the generator itself.
+So if you want to change behavior, edit `ls_cx_ss/` first, then regenerate
+`docs/ls-cx-ss.py`. Do not hand-edit `docs/ls-cx-ss.py` unless you are debugging
+the generator itself.
 
 ## GitHub Pages URL usage
 
@@ -80,9 +71,9 @@ curl -fsSL https://lxchx.github.io/ls-cx-ss/install.py | python3 -
 ~/.local/bin/ls-cx-ss list
 ```
 
-## Commands
+## Installed command
 
-The packaged entry point still works if you prefer to install it:
+If you install it locally, the command still works as:
 
 ```bash
 ls-cx-ss list
