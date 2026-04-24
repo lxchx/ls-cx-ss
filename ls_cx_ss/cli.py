@@ -11,6 +11,8 @@ from ls_cx_ss.scanner import load_sessions
 from ls_cx_ss.timefmt import ago
 from ls_cx_ss.tui import launch_tui, resume_with_terminal
 
+KNOWN_COMMANDS = {"list", "tui", "resume"}
+
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="ls-cx-ss")
@@ -80,12 +82,22 @@ def resume_session(session_id: str) -> int:
     return resume_with_terminal(session_id)
 
 
-def main(argv: list[str] | None = None) -> int:
-    argv = list(sys.argv[1:] if argv is None else argv)
+def normalize_argv(argv: list[str]) -> list[str]:
     if not argv:
-        argv = ["tui"]
-    elif argv[0] not in {"list", "tui", "resume", "-h", "--help"}:
-        argv = ["tui", *argv]
+        return ["tui"]
+    if argv[0] == "help":
+        if len(argv) == 1:
+            return ["-h"]
+        if argv[1] in KNOWN_COMMANDS:
+            return [argv[1], "--help", *argv[2:]]
+        return ["-h"]
+    if argv[0] not in KNOWN_COMMANDS | {"-h", "--help"}:
+        return ["tui", *argv]
+    return argv
+
+
+def main(argv: list[str] | None = None) -> int:
+    argv = normalize_argv(list(sys.argv[1:] if argv is None else argv))
 
     parser = build_parser()
     args = parser.parse_args(argv)

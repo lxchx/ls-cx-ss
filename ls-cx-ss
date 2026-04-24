@@ -27,10 +27,11 @@ KEY_ESC = 27
 KEY_TAB = 9
 KEY_BACKSPACE_CODES = {curses.KEY_BACKSPACE, 127, 8}
 TUI_SORT_KEYS = ("updated", "created")
-APP_VERSION = "0.3.1"
+APP_VERSION = "0.3.2"
 DEFAULT_SCRIPT_URL = "https://lxchx.github.io/ls-cx-ss/ls-cx-ss.py"
 DEFAULT_BIN_DIR = Path("~/.local/bin").expanduser()
 VERSION_RE = re.compile(r'APP_VERSION = "([^"]+)"|__version__ = "([^"]+)"')
+KNOWN_COMMANDS = {"list", "tui", "resume"}
 HEADER_LABELS = {
     "created": "Created",
     "updated": "Updated",
@@ -859,12 +860,22 @@ def resume_session(session_id: str) -> int:
     return resume_with_terminal(session_id)
 
 
-def main(argv: list[str] | None = None) -> int:
-    argv = list(sys.argv[1:] if argv is None else argv)
+def normalize_argv(argv: list[str]) -> list[str]:
     if not argv:
-        argv = ["tui"]
-    elif argv[0] not in {"list", "tui", "resume", "-h", "--help"}:
-        argv = ["tui", *argv]
+        return ["tui"]
+    if argv[0] == "help":
+        if len(argv) == 1:
+            return ["-h"]
+        if argv[1] in KNOWN_COMMANDS:
+            return [argv[1], "--help", *argv[2:]]
+        return ["-h"]
+    if argv[0] not in KNOWN_COMMANDS | {"-h", "--help"}:
+        return ["tui", *argv]
+    return argv
+
+
+def main(argv: list[str] | None = None) -> int:
+    argv = normalize_argv(list(sys.argv[1:] if argv is None else argv))
 
     parser = build_parser()
     args = parser.parse_args(argv)
