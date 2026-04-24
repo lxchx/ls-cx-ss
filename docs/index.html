@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>ls-cx-ss</title>
+    <style>
+      :root {
+        color-scheme: light;
+        --bg: #f7f6f2;
+        --fg: #111111;
+        --muted: #555555;
+        --accent: #0b57d0;
+        --card: #ffffff;
+        --border: #ddd6c8;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        font: 16px/1.6 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+        color: var(--fg);
+        background:
+          radial-gradient(circle at top right, #efe8d7 0, transparent 28%),
+          linear-gradient(180deg, #fcfbf7 0, var(--bg) 100%);
+      }
+      main {
+        max-width: 920px;
+        margin: 0 auto;
+        padding: 48px 20px 64px;
+      }
+      h1, h2 { line-height: 1.15; }
+      h1 { font-size: clamp(2rem, 5vw, 3.5rem); margin: 0 0 12px; }
+      h2 { margin-top: 36px; }
+      p { margin: 0 0 16px; }
+      .lede { color: var(--muted); max-width: 62ch; }
+      .card {
+        background: var(--card);
+        border: 1px solid var(--border);
+        border-radius: 16px;
+        padding: 18px;
+        margin: 18px 0;
+        box-shadow: 0 12px 30px rgba(17, 17, 17, 0.06);
+      }
+      pre {
+        margin: 0;
+        overflow-x: auto;
+        white-space: pre-wrap;
+        word-break: break-word;
+      }
+      a { color: var(--accent); }
+      .links a { display: inline-block; margin-right: 18px; margin-bottom: 8px; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>ls-cx-ss</h1>
+      <p class="lede">
+        A single-file Codex session helper with GitHub Pages distribution.
+        You can run it straight from a URL via <code>python3</code>, or install one command locally.
+      </p>
+
+      <div class="card">
+        <h2>Use Directly From URL</h2>
+        <pre>curl -fsSL https://lxchx.github.io/ls-cx-ss/ls-cx-ss.py | python3 - list
+curl -fsSL https://lxchx.github.io/ls-cx-ss/ls-cx-ss.py | python3 - tui
+curl -fsSL https://lxchx.github.io/ls-cx-ss/ls-cx-ss.py | python3 - list --all-cwds
+curl -fsSL https://lxchx.github.io/ls-cx-ss/ls-cx-ss.py | python3 - list --search manga</pre>
+      </div>
+
+      <div class="card">
+        <h2>Install From URL</h2>
+        <pre>curl -fsSL https://lxchx.github.io/ls-cx-ss/install.py | python3 -
+~/.local/bin/ls-cx-ss list</pre>
+      </div>
+
+      <div class="card">
+        <h2>Files</h2>
+        <p class="links">
+          <a href="./ls-cx-ss.py">ls-cx-ss.py</a>
+          <a href="./install.py">install.py</a>
+          <a href="https://github.com/lxchx/ls-cx-ss">GitHub repository</a>
+        </p>
+      </div>
+    </main>
+  </body>
+</html>
