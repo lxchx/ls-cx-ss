@@ -8,6 +8,7 @@ from ls_cx_ss import __version__
 from ls_cx_ss.distribution import (
     DEFAULT_BIN_DIR,
     DEFAULT_COMMAND_NAME,
+    DEFAULT_SCRIPT_URL,
     check_for_update,
     install_to_local,
     installed_version,
@@ -135,6 +136,14 @@ def handle_search_input(search: str, key) -> Tuple[str, bool]:
     return search, False
 
 
+def search_label(search: str, search_mode: bool) -> str:
+    if search_mode:
+        return "Search: {0}_".format(search)
+    if search:
+        return "Search: {0}  (/ to edit)".format(search)
+    return "Press / to search"
+
+
 def sort_label(key: str, reverse: bool) -> str:
     return header_label(key, key, reverse).replace(" ↑", "").replace(" ↓", "")
 
@@ -227,6 +236,7 @@ def draw(
     selected: int,
     scroll: int,
     search: str,
+    search_mode: bool,
     sort_key: str,
     reverse: bool,
     show_cwd: bool,
@@ -239,8 +249,11 @@ def draw(
     content_width = max(1, width - 1)
     title = "Resume a previous session"
     current_sort_label = header_label(sort_key, sort_key, reverse)
-    search_label = f"Search: {search}" if search else "Type to search"
-    footer = "enter resume  esc quit  tab sort  R reverse  I install to local  U check update  ↑/↓ browse  ←/→ pan"
+    prompt = search_label(search, search_mode)
+    if search_mode:
+        footer = "search mode: type filter  enter done  esc stop editing  backspace delete  ctrl-u clear"
+    else:
+        footer = "/ search  enter resume  q/esc quit  tab sort  r reverse  i install  u update  ↑/↓ browse  ←/→ pan"
 
     safe_addnstr(stdscr, 0, 0, title, content_width, palette["title"])
     sort_x = min(content_width, display_width(title) + 2)
@@ -253,7 +266,14 @@ def draw(
         max(0, content_width - sort_x - len("Sort: ")),
         palette["accent"],
     )
-    safe_addnstr(stdscr, 1, 0, search_label, content_width, palette["muted"] if not search else palette["accent"])
+    safe_addnstr(
+        stdscr,
+        1,
+        0,
+        prompt,
+        content_width,
+        palette["accent"] if (search or search_mode) else palette["muted"],
+    )
 
     widths = full_column_widths(visible_rows or all_rows, show_cwd=show_cwd, active_sort=sort_key, reverse=reverse)
     max_horizontal_scroll = max(0, table_width(widths) - content_width)
@@ -307,6 +327,7 @@ def run_picker(
     scroll = 0
     horizontal_scroll = 0
     search = initial_search
+    search_mode = False
     current_sort = sort_key if sort_key in SORT_KEYS else TUI_SORT_KEYS[0]
     status = initial_status
     pending_selected_session_id = initial_selected_session_id
@@ -339,6 +360,7 @@ def run_picker(
             selected,
             scroll,
             search,
+            search_mode,
             current_sort,
             reverse,
             show_cwd,
@@ -349,7 +371,29 @@ def run_picker(
 
         key = stdscr.get_wch()
         if key in ("\x1b", KEY_ESC):
+            if search_mode:
+                search_mode = False
+                status = ""
+                continue
             return None
+        if search_mode:
+            if key in ("\n", "\r", curses.KEY_ENTER):
+                search_mode = False
+                status = ""
+                continue
+            search, changed = handle_search_input(search, key)
+            if changed:
+                selected = 0
+                scroll = 0
+                horizontal_scroll = 0
+                status = ""
+            continue
+        if key in ("q", "Q"):
+            return None
+        if key == "/":
+            search_mode = True
+            status = ""
+            continue
         if key == curses.KEY_UP:
             selected = max(0, selected - 1)
         elif key == curses.KEY_DOWN:
@@ -380,14 +424,30 @@ def run_picker(
         elif key == curses.KEY_RIGHT:
             horizontal_scroll = min(max_horizontal_scroll, horizontal_scroll + max(4, width // 3))
             status = ""
-        elif key == "R":
+        elif key in ("r", "R"):
             reverse = not reverse
             selected = 0
             scroll = 0
             horizontal_scroll = 0
             status = f"Sort direction: {'descending' if reverse else 'ascending'}."
-        elif key == "I":
+        elif key in ("i", "I"):
             try:
+                status = "Fetching {0}...".format(DEFAULT_SCRIPT_URL)
+                draw(
+                    stdscr,
+                    rows,
+                    visible_rows,
+                    selected,
+                    scroll,
+                    search,
+                    search_mode,
+                    current_sort,
+                    reverse,
+                    show_cwd,
+                    status,
+                    horizontal_scroll,
+                    palette,
+                )
                 selected_session_id = visible_rows[selected].session_id if visible_rows else None
                 status = install_to_local()
                 version = installed_version()
@@ -407,27 +467,30 @@ def run_picker(
                 )
             except Exception as exc:
                 status = f"Install failed: {exc}"
-        elif key == "U":
+        elif key in ("u", "U"):
             try:
+                status = "Fetching {0}...".format(DEFAULT_SCRIPT_URL)
+                draw(
+                    stdscr,
+                    rows,
+                    visible_rows,
+                    selected,
+                    scroll,
+                    search,
+                    search_mode,
+                    current_sort,
+                    reverse,
+                    show_cwd,
+                    status,
+                    horizontal_scroll,
+                    palette,
+                )
                 status = check_for_update()
             except Exception as exc:
                 status = f"Update check failed: {exc}"
         elif key in ("\n", "\r", curses.KEY_ENTER):
             if visible_rows:
                 return visible_rows[selected].session_id
-        elif key in KEY_BACKSPACE_CODES:
-            search = search[:-1]
-            selected = 0
-            scroll = 0
-            horizontal_scroll = 0
-            status = ""
-        else:
-            search, changed = handle_search_input(search, key)
-            if changed:
-                selected = 0
-                scroll = 0
-                horizontal_scroll = 0
-                status = ""
 
 
 def launch_tui(

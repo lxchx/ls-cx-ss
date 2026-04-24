@@ -57,10 +57,12 @@ curl -fsSL https://lxchx.github.io/ls-cx-ss/ls-cx-ss.py | python3 - tui
 如果不带子命令，现在默认会进入 TUI。`-h` / `--help` 仍然显示帮助。
 在 TUI 里：
 
-- `s`: 切换排序列
+- `/`: 进入或编辑搜索模式
+- `Tab`: 切换排序列
 - `r`: 切换升序 / 降序
 - `i`: 把最新 Pages 版本安装到 `~/.local/bin/ls-cx-ss`
 - `u`: 检查是否有更新
+- `q`: 退出
 
 如果要直接从 URL 安装，使用同站点托管的安装脚本：
 
@@ -84,10 +86,12 @@ ls-cx-ss resume <SESSION_ID>
 - `Up/Down` 或 `j/k`: 移动
 - `PageUp/PageDown`: 翻页
 - `Home/End`: 跳到首尾
-- `/`: 搜索
-- `s`: 切换排序键
+- `Left/Right`: 左右平移
+- `/`: 进入或编辑搜索模式
+- `Tab`: 切换排序键
 - `r`: 切换倒序
 - `i`: 安装到本地 `~/.local/bin/ls-cx-ss`
 - `u`: 检查 GitHub Pages 上是否有更新
 - `Enter`: 恢复选中的 session
-- `q` 或 `Esc`: 退出
+- `q`: 退出
+- `Esc`: 退出，或在编辑搜索时退出搜索模式
