@@ -29,6 +29,7 @@ TUI_SORT_KEYS = ("updated", "created")
 APP_VERSION = "0.3.5"
 DEFAULT_SCRIPT_URL = "https://lxchx.github.io/ls-cx-ss/ls-cx-ss.py"
 DEFAULT_BIN_DIR = Path("~/.local/bin").expanduser()
+DEFAULT_COMMAND_NAME = "ls-cx-ss"
 VERSION_RE = re.compile(r'APP_VERSION = "([^"]+)"|__version__ = "([^"]+)"')
 ISO_TZ_RE = re.compile(r"([+-]\d{2}):?(\d{2})$")
 KNOWN_COMMANDS = {"list", "tui", "resume"}
@@ -443,10 +444,17 @@ def ensure_executable(path: Path) -> None:
     path.chmod(mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
 
 
+def _extract_version(raw: str) -> Optional[str]:
+    match = VERSION_RE.search(raw)
+    if not match:
+        return None
+    return match.group(1) or match.group(2)
+
+
 def install_to_local(
     url: str = DEFAULT_SCRIPT_URL,
     bin_dir: Path = DEFAULT_BIN_DIR,
-    command_name: str = "ls-cx-ss",
+    command_name: str = DEFAULT_COMMAND_NAME,
 ) -> str:
     target_dir = Path(bin_dir).expanduser()
     target_dir.mkdir(parents=True, exist_ok=True)
@@ -469,24 +477,35 @@ def parse_version(raw: str) -> Tuple[int, ...]:
 
 
 def remote_version(url: str = DEFAULT_SCRIPT_URL) -> Optional[str]:
-    match = VERSION_RE.search(download_text(url))
-    if not match:
+    return _extract_version(download_text(url))
+
+
+def installed_version(
+    bin_dir: Path = DEFAULT_BIN_DIR,
+    command_name: str = DEFAULT_COMMAND_NAME,
+) -> Optional[str]:
+    target_path = Path(bin_dir).expanduser() / command_name
+    if not target_path.exists():
         return None
-    return match.group(1) or match.group(2)
+    try:
+        return _extract_version(target_path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
 
 
 def check_for_update(current_version: str = APP_VERSION, url: str = DEFAULT_SCRIPT_URL) -> str:
+    effective_current = installed_version() or current_version
     latest = remote_version(url)
     if not latest:
         return "Update check failed: could not read remote version."
-    if parse_version(latest) > parse_version(current_version):
+    if parse_version(latest) > parse_version(effective_current):
         return (
-            f"Update available: {current_version} -> {latest}. "
+            f"Update available: {effective_current} -> {latest}. "
             "Press uppercase I to install/update ~/.local/bin/ls-cx-ss."
         )
-    if parse_version(latest) == parse_version(current_version):
-        return f"Already up to date: {current_version}."
-    return f"Running newer build: {current_version} (remote {latest})."
+    if parse_version(latest) == parse_version(effective_current):
+        return f"Already up to date: {effective_current}."
+    return f"Running newer build: {effective_current} (remote {latest})."
 
 
 def init_palette() -> Dict[str, int]:
