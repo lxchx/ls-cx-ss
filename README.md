@@ -33,9 +33,12 @@ chmod +x ./ls-cx-ss
 The project also supports GitHub Pages distribution, so you can use it directly from a URL:
 
 ```bash
+curl -fsSL https://lxchx.github.io/ls-cx-ss/ls-cx-ss.py | python3 -
 curl -fsSL https://lxchx.github.io/ls-cx-ss/ls-cx-ss.py | python3 - list
 curl -fsSL https://lxchx.github.io/ls-cx-ss/ls-cx-ss.py | python3 - tui
 ```
+
+With no subcommand, it now defaults to the TUI. `-h` / `--help` still shows help.
 
 For URL-based install, use the Python installer script hosted on the same Pages site:
 

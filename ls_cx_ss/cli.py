@@ -4,6 +4,7 @@ import argparse
 import json
 import os
 import shutil
+import sys
 
 from ls_cx_ss.query import SORT_KEYS, filter_rows, sort_rows
 from ls_cx_ss.render import compute_column_widths, format_header, format_row
@@ -82,6 +83,12 @@ def resume_session(session_id: str) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
+    argv = list(sys.argv[1:] if argv is None else argv)
+    if not argv:
+        argv = ["tui"]
+    elif argv[0] not in {"list", "tui", "resume", "-h", "--help"}:
+        argv = ["tui", *argv]
+
     parser = build_parser()
     args = parser.parse_args(argv)
 

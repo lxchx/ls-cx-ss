@@ -6,8 +6,10 @@ import curses
 import json
 import os
 import shutil
+import sys
 import time
 import unicodedata
+from contextlib import contextmanager
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -30,6 +32,31 @@ class SessionRow:
     conversation: str
     cwd: str
     path: str
+
+
+@contextmanager
+def attached_terminal():
+    if os.isatty(0) and os.isatty(1):
+        yield
+        return
+
+    try:
+        tty_fd = os.open("/dev/tty", os.O_RDWR)
+    except OSError as exc:
+        raise RuntimeError("This command needs an interactive terminal.") from exc
+
+    saved_stdin = os.dup(0)
+    saved_stdout = os.dup(1)
+    try:
+        os.dup2(tty_fd, 0)
+        os.dup2(tty_fd, 1)
+        yield
+    finally:
+        os.dup2(saved_stdin, 0)
+        os.dup2(saved_stdout, 1)
+        os.close(saved_stdin)
+        os.close(saved_stdout)
+        os.close(tty_fd)
 
 
 def parse_timestamp(raw: str | datetime) -> datetime:
@@ -260,7 +287,10 @@ def load_sessions(cwd: str | None = None, all_cwds: bool = False) -> list[Sessio
 
 def prompt_input(stdscr, label: str, initial: str = "") -> str:
     height, width = stdscr.getmaxyx()
-    curses.curs_set(1)
+    try:
+        curses.curs_set(1)
+    except curses.error:
+        pass
     curses.echo()
     try:
         stdscr.move(height - 1, 0)
@@ -272,7 +302,10 @@ def prompt_input(stdscr, label: str, initial: str = "") -> str:
         return typed.decode("utf-8", errors="replace")
     finally:
         curses.noecho()
-        curses.curs_set(0)
+        try:
+            curses.curs_set(0)
+        except curses.error:
+            pass
 
 
 def materialize_rows(
@@ -328,7 +361,10 @@ def run_picker(
     reverse: bool = True,
     show_cwd: bool = False,
 ) -> str | None:
-    curses.curs_set(0)
+    try:
+        curses.curs_set(0)
+    except curses.error:
+        pass
     stdscr.keypad(True)
 
     selected = 0
@@ -397,11 +433,10 @@ def run_picker(
 def launch_tui(
     rows: Sequence[SessionRow], sort_key: str = "updated", reverse: bool = True, show_cwd: bool = False
 ) -> str | None:
-    if not os.isatty(0) or not os.isatty(1):
-        raise RuntimeError("This command needs an interactive terminal.")
     if shutil.which("codex") is None:
         raise RuntimeError("`codex` not found in PATH.")
-    return curses.wrapper(run_picker, rows, sort_key, reverse, show_cwd)
+    with attached_terminal():
+        return curses.wrapper(run_picker, rows, sort_key, reverse, show_cwd)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -477,6 +512,12 @@ def resume_session(session_id: str) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
+    argv = list(sys.argv[1:] if argv is None else argv)
+    if not argv:
+        argv = ["tui"]
+    elif argv[0] not in {"list", "tui", "resume", "-h", "--help"}:
+        argv = ["tui", *argv]
+
     parser = build_parser()
     args = parser.parse_args(argv)
 
