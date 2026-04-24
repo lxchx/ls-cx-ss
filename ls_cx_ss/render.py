@@ -8,6 +8,22 @@ from ls_cx_ss.timefmt import ago
 
 GUTTER = 2
 MIN_CONVO_WIDTH = 20
+HEADER_LABELS = {
+    "created": "Created",
+    "updated": "Updated",
+    "branch": "Branch",
+    "provider": "Provider",
+    "session_id": "SessionID",
+    "cwd": "CWD",
+    "conversation": "Conversation",
+}
+
+
+def header_label(key: str, active_sort: str | None = None, reverse: bool = False) -> str:
+    label = HEADER_LABELS[key]
+    if key != active_sort:
+        return label
+    return f"{label}{' ↓' if reverse else ' ↑'}"
 
 
 def char_width(ch: str) -> int:
@@ -47,33 +63,67 @@ def pad_display(text: str, width: int) -> str:
 
 
 def compute_column_widths(
-    rows: Sequence[SessionRow], total_width: int, show_cwd: bool = False
+    rows: Sequence[SessionRow],
+    total_width: int,
+    show_cwd: bool = False,
+    active_sort: str | None = None,
+    reverse: bool = False,
 ) -> dict[str, int]:
     fixed = {
-        "created": max(len("Created"), max((display_width(ago(r.created_at)) for r in rows), default=0)),
-        "updated": max(len("Updated"), max((display_width(ago(r.updated_at)) for r in rows), default=0)),
-        "branch": min(24, max(len("Branch"), max((display_width(r.branch) for r in rows), default=0))),
-        "provider": min(16, max(len("Provider"), max((display_width(r.provider) for r in rows), default=0))),
-        "session_id": max(len("SessionID"), max((display_width(r.session_id) for r in rows), default=0)),
+        "created": max(
+            display_width(header_label("created", active_sort, reverse)),
+            max((display_width(ago(r.created_at)) for r in rows), default=0),
+        ),
+        "updated": max(
+            display_width(header_label("updated", active_sort, reverse)),
+            max((display_width(ago(r.updated_at)) for r in rows), default=0),
+        ),
+        "branch": min(
+            24,
+            max(
+                display_width(header_label("branch", active_sort, reverse)),
+                max((display_width(r.branch) for r in rows), default=0),
+            ),
+        ),
+        "provider": min(
+            16,
+            max(
+                display_width(header_label("provider", active_sort, reverse)),
+                max((display_width(r.provider) for r in rows), default=0),
+            ),
+        ),
+        "session_id": max(
+            display_width(header_label("session_id", active_sort, reverse)),
+            max((display_width(r.session_id) for r in rows), default=0),
+        ),
     }
     if show_cwd:
-        fixed["cwd"] = min(32, max(len("CWD"), max((display_width(r.cwd) for r in rows), default=0)))
+        fixed["cwd"] = min(
+            32,
+            max(
+                display_width(header_label("cwd", active_sort, reverse)),
+                max((display_width(r.cwd) for r in rows), default=0),
+            ),
+        )
     reserved = sum(fixed.values()) + (len(fixed) * GUTTER)
-    convo_width = max(MIN_CONVO_WIDTH, total_width - reserved - 1)
+    convo_width = max(
+        max(MIN_CONVO_WIDTH, display_width(header_label("conversation", active_sort, reverse))),
+        total_width - reserved - 1,
+    )
     return {**fixed, "conversation": convo_width}
 
 
 def format_header(widths: dict[str, int], show_cwd: bool = False) -> str:
     labels = [
-        pad_display("Created", widths["created"]),
-        pad_display("Updated", widths["updated"]),
-        pad_display("Branch", widths["branch"]),
-        pad_display("Provider", widths["provider"]),
-        pad_display("SessionID", widths["session_id"]),
+        pad_display(header_label("created"), widths["created"]),
+        pad_display(header_label("updated"), widths["updated"]),
+        pad_display(header_label("branch"), widths["branch"]),
+        pad_display(header_label("provider"), widths["provider"]),
+        pad_display(header_label("session_id"), widths["session_id"]),
     ]
     if show_cwd:
-        labels.append(pad_display("CWD", widths["cwd"]))
-    labels.append(pad_display("Conversation", widths["conversation"]))
+        labels.append(pad_display(header_label("cwd"), widths["cwd"]))
+    labels.append(pad_display(header_label("conversation"), widths["conversation"]))
     return (" " * GUTTER).join(labels)
 
 

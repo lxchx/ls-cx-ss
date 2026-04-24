@@ -5,12 +5,11 @@ import json
 import os
 import shutil
 import sys
-
 from ls_cx_ss.query import SORT_KEYS, filter_rows, sort_rows
 from ls_cx_ss.render import compute_column_widths, format_header, format_row
 from ls_cx_ss.scanner import load_sessions
 from ls_cx_ss.timefmt import ago
-from ls_cx_ss.tui import launch_tui
+from ls_cx_ss.tui import launch_tui, resume_with_terminal
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -78,8 +77,7 @@ def print_json(rows: list) -> None:
 
 
 def resume_session(session_id: str) -> int:
-    os.execvp("codex", ["codex", "resume", session_id])
-    return 0
+    return resume_with_terminal(session_id)
 
 
 def main(argv: list[str] | None = None) -> int:

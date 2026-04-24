@@ -39,6 +39,12 @@ curl -fsSL https://lxchx.github.io/ls-cx-ss/ls-cx-ss.py | python3 - tui
 ```
 
 With no subcommand, it now defaults to the TUI. `-h` / `--help` still shows help.
+Inside the TUI:
+
+- `s`: cycle sort column
+- `r`: toggle ascending / descending
+- `i`: install the latest Pages build to `~/.local/bin/ls-cx-ss`
+- `u`: check whether a newer Pages build is available
 
 For URL-based install, use the Python installer script hosted on the same Pages site:
 
@@ -65,5 +71,7 @@ ls-cx-ss resume <SESSION_ID>
 - `/`: search
 - `s`: cycle sort key
 - `r`: toggle reverse
+- `i`: install to local `~/.local/bin/ls-cx-ss`
+- `u`: check for updates from GitHub Pages
 - `Enter`: resume selected session
 - `q` or `Esc`: quit

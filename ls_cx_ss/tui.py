@@ -6,9 +6,11 @@ import shutil
 from contextlib import contextmanager
 from collections.abc import Sequence
 
+from ls_cx_ss import __version__
+from ls_cx_ss.distribution import check_for_update, install_to_local
 from ls_cx_ss.model import SessionRow
 from ls_cx_ss.query import SORT_KEYS, filter_rows, sort_rows
-from ls_cx_ss.render import compute_column_widths, format_header, format_row, truncate_display
+from ls_cx_ss.render import GUTTER, compute_column_widths, format_row, header_label, pad_display, truncate_display
 
 KEY_ESC = 27
 
@@ -26,15 +28,19 @@ def attached_terminal():
 
     saved_stdin = os.dup(0)
     saved_stdout = os.dup(1)
+    saved_stderr = os.dup(2)
     try:
         os.dup2(tty_fd, 0)
         os.dup2(tty_fd, 1)
+        os.dup2(tty_fd, 2)
         yield
     finally:
         os.dup2(saved_stdin, 0)
         os.dup2(saved_stdout, 1)
+        os.dup2(saved_stderr, 2)
         os.close(saved_stdin)
         os.close(saved_stdout)
+        os.close(saved_stderr)
         os.close(tty_fd)
 
 
@@ -67,6 +73,47 @@ def materialize_rows(
     return sort_rows(filter_rows(rows, search), sort_key=sort_key, reverse=reverse)
 
 
+def resume_with_terminal(session_id: str) -> int:
+    if shutil.which("codex") is None:
+        raise RuntimeError("`codex` not found in PATH.")
+    with attached_terminal():
+        os.execvp("codex", ["codex", "resume", session_id])
+    return 0
+
+
+def draw_header(
+    stdscr,
+    widths: dict[str, int],
+    row_y: int,
+    sort_key: str,
+    reverse: bool,
+    show_cwd: bool,
+    width: int,
+) -> None:
+    fields = [
+        ("created", widths["created"]),
+        ("updated", widths["updated"]),
+        ("branch", widths["branch"]),
+        ("provider", widths["provider"]),
+        ("session_id", widths["session_id"]),
+    ]
+    if show_cwd:
+        fields.append(("cwd", widths["cwd"]))
+    fields.append(("conversation", widths["conversation"]))
+
+    x = 0
+    for idx, (key, cell_width) in enumerate(fields):
+        label = pad_display(header_label(key, sort_key, reverse), cell_width)
+        attr = curses.A_BOLD
+        if key == sort_key:
+            attr |= curses.A_REVERSE
+        stdscr.addnstr(row_y, x, label, max(0, width - x), attr)
+        x += cell_width
+        if idx != len(fields) - 1:
+            stdscr.addnstr(row_y, x, " " * GUTTER, max(0, width - x))
+            x += GUTTER
+
+
 def draw(
     stdscr,
     all_rows: Sequence[SessionRow],
@@ -77,22 +124,31 @@ def draw(
     sort_key: str,
     reverse: bool,
     show_cwd: bool,
+    status: str,
 ) -> None:
     stdscr.erase()
     height, width = stdscr.getmaxyx()
-    title = f"ls-cx-ss  cwd={os.getcwd()}  rows={len(visible_rows)}/{len(all_rows)}"
-    hint = f"/ search  s sort({sort_key})  r reverse({reverse})  Enter resume  q/Esc quit"
+    title = f"ls-cx-ss v{__version__}  cwd={os.getcwd()}  rows={len(visible_rows)}/{len(all_rows)}"
+    hint = f"/ search  s sort  r reverse  i install  u update  Enter resume  q/Esc quit"
     stdscr.addnstr(0, 0, truncate_display(title, width - 1), width - 1, curses.A_BOLD)
+    meta_row = 1
+    if status:
+        stdscr.addnstr(meta_row, 0, truncate_display(status, width - 1), width - 1)
+        meta_row += 1
     if search:
-        stdscr.addnstr(1, 0, truncate_display(f"search: {search}", width - 1), width - 1)
-        header_row = 3
-    else:
-        header_row = 2
+        stdscr.addnstr(meta_row, 0, truncate_display(f"search: {search}", width - 1), width - 1)
+        meta_row += 1
 
-    widths = compute_column_widths(visible_rows or all_rows, width - 1, show_cwd=show_cwd)
-    stdscr.addnstr(header_row, 0, format_header(widths, show_cwd=show_cwd), width - 1, curses.A_BOLD)
+    widths = compute_column_widths(
+        visible_rows or all_rows,
+        width - 1,
+        show_cwd=show_cwd,
+        active_sort=sort_key,
+        reverse=reverse,
+    )
+    draw_header(stdscr, widths, meta_row, sort_key, reverse, show_cwd, width - 1)
 
-    list_top = header_row + 1
+    list_top = meta_row + 1
     list_height = max(1, height - list_top - 1)
     for idx, row in enumerate(visible_rows[scroll : scroll + list_height]):
         attr = curses.A_REVERSE if scroll + idx == selected else curses.A_NORMAL
@@ -124,6 +180,7 @@ def run_picker(
     scroll = 0
     search = ""
     sort_index = SORT_KEYS.index(sort_key) if sort_key in SORT_KEYS else 0
+    status = "Ready. Enter resumes the selected session."
 
     while True:
         current_sort = SORT_KEYS[sort_index]
@@ -132,8 +189,8 @@ def run_picker(
             selected = max(0, len(visible_rows) - 1)
 
         height, _ = stdscr.getmaxyx()
-        header_rows = 4 if search else 3
-        list_height = max(1, height - header_rows - 1)
+        meta_rows = 2 + (1 if status else 0) + (1 if search else 0)
+        list_height = max(1, height - meta_rows - 1)
         if selected < scroll:
             scroll = selected
         elif selected >= scroll + list_height:
@@ -149,6 +206,7 @@ def run_picker(
             current_sort,
             reverse,
             show_cwd,
+            status,
         )
 
         key = stdscr.getch()
@@ -170,17 +228,30 @@ def run_picker(
             search = prompt_input(stdscr, "search> ", initial=search)
             selected = 0
             scroll = 0
+            status = f"Filtered rows with search={search!r}." if search else "Cleared search filter."
         elif key == ord("s"):
             sort_index = (sort_index + 1) % len(SORT_KEYS)
             selected = 0
             scroll = 0
+            status = f"Sorted by {SORT_KEYS[sort_index]}."
         elif key == ord("r"):
             reverse = not reverse
             selected = 0
             scroll = 0
+            status = f"Sort direction: {'descending' if reverse else 'ascending'}."
+        elif key == ord("i"):
+            try:
+                status = install_to_local()
+            except Exception as exc:
+                status = f"Install failed: {exc}"
+        elif key == ord("u"):
+            try:
+                status = check_for_update()
+            except Exception as exc:
+                status = f"Update check failed: {exc}"
         elif key in (10, 13, curses.KEY_ENTER):
             if visible_rows:
-                return visible_rows[selected].session_id
+                return resume_with_terminal(visible_rows[selected].session_id)
 
 
 def launch_tui(

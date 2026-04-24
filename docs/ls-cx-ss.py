@@ -5,9 +5,12 @@ import argparse
 import curses
 import json
 import os
+import re
 import shutil
 import sys
 import time
+import stat
+import urllib.request
 import unicodedata
 from contextlib import contextmanager
 from collections.abc import Iterable, Sequence
@@ -20,6 +23,19 @@ HEAD_SCAN_LINES = 12
 GUTTER = 2
 MIN_CONVO_WIDTH = 20
 KEY_ESC = 27
+APP_VERSION = "0.2.0"
+DEFAULT_SCRIPT_URL = "https://lxchx.github.io/ls-cx-ss/ls-cx-ss.py"
+DEFAULT_BIN_DIR = Path("~/.local/bin").expanduser()
+VERSION_RE = re.compile(r'APP_VERSION = "([^"]+)"|__version__ = "([^"]+)"')
+HEADER_LABELS = {
+    "created": "Created",
+    "updated": "Updated",
+    "branch": "Branch",
+    "provider": "Provider",
+    "session_id": "SessionID",
+    "cwd": "CWD",
+    "conversation": "Conversation",
+}
 
 
 @dataclass(slots=True)
@@ -47,15 +63,19 @@ def attached_terminal():
 
     saved_stdin = os.dup(0)
     saved_stdout = os.dup(1)
+    saved_stderr = os.dup(2)
     try:
         os.dup2(tty_fd, 0)
         os.dup2(tty_fd, 1)
+        os.dup2(tty_fd, 2)
         yield
     finally:
         os.dup2(saved_stdin, 0)
         os.dup2(saved_stdout, 1)
+        os.dup2(saved_stderr, 2)
         os.close(saved_stdin)
         os.close(saved_stdout)
+        os.close(saved_stderr)
         os.close(tty_fd)
 
 
@@ -120,6 +140,13 @@ def pad_display(text: str, width: int) -> str:
     return clipped + (" " * max(0, width - display_width(clipped)))
 
 
+def header_label(key: str, active_sort: str | None = None, reverse: bool = False) -> str:
+    label = HEADER_LABELS[key]
+    if key != active_sort:
+        return label
+    return f"{label}{' ↓' if reverse else ' ↑'}"
+
+
 def sort_rows(
     rows: Iterable[SessionRow], sort_key: str = "updated", reverse: bool | None = None
 ) -> list[SessionRow]:
@@ -156,33 +183,67 @@ def filter_rows(rows: Iterable[SessionRow], search: str) -> list[SessionRow]:
 
 
 def compute_column_widths(
-    rows: Sequence[SessionRow], total_width: int, show_cwd: bool = False
+    rows: Sequence[SessionRow],
+    total_width: int,
+    show_cwd: bool = False,
+    active_sort: str | None = None,
+    reverse: bool = False,
 ) -> dict[str, int]:
     fixed = {
-        "created": max(len("Created"), max((display_width(ago(r.created_at)) for r in rows), default=0)),
-        "updated": max(len("Updated"), max((display_width(ago(r.updated_at)) for r in rows), default=0)),
-        "branch": min(24, max(len("Branch"), max((display_width(r.branch) for r in rows), default=0))),
-        "provider": min(16, max(len("Provider"), max((display_width(r.provider) for r in rows), default=0))),
-        "session_id": max(len("SessionID"), max((display_width(r.session_id) for r in rows), default=0)),
+        "created": max(
+            display_width(header_label("created", active_sort, reverse)),
+            max((display_width(ago(r.created_at)) for r in rows), default=0),
+        ),
+        "updated": max(
+            display_width(header_label("updated", active_sort, reverse)),
+            max((display_width(ago(r.updated_at)) for r in rows), default=0),
+        ),
+        "branch": min(
+            24,
+            max(
+                display_width(header_label("branch", active_sort, reverse)),
+                max((display_width(r.branch) for r in rows), default=0),
+            ),
+        ),
+        "provider": min(
+            16,
+            max(
+                display_width(header_label("provider", active_sort, reverse)),
+                max((display_width(r.provider) for r in rows), default=0),
+            ),
+        ),
+        "session_id": max(
+            display_width(header_label("session_id", active_sort, reverse)),
+            max((display_width(r.session_id) for r in rows), default=0),
+        ),
     }
     if show_cwd:
-        fixed["cwd"] = min(32, max(len("CWD"), max((display_width(r.cwd) for r in rows), default=0)))
+        fixed["cwd"] = min(
+            32,
+            max(
+                display_width(header_label("cwd", active_sort, reverse)),
+                max((display_width(r.cwd) for r in rows), default=0),
+            ),
+        )
     reserved = sum(fixed.values()) + (len(fixed) * GUTTER)
-    convo_width = max(MIN_CONVO_WIDTH, total_width - reserved - 1)
+    convo_width = max(
+        max(MIN_CONVO_WIDTH, display_width(header_label("conversation", active_sort, reverse))),
+        total_width - reserved - 1,
+    )
     return {**fixed, "conversation": convo_width}
 
 
 def format_header(widths: dict[str, int], show_cwd: bool = False) -> str:
     labels = [
-        pad_display("Created", widths["created"]),
-        pad_display("Updated", widths["updated"]),
-        pad_display("Branch", widths["branch"]),
-        pad_display("Provider", widths["provider"]),
-        pad_display("SessionID", widths["session_id"]),
+        pad_display(header_label("created"), widths["created"]),
+        pad_display(header_label("updated"), widths["updated"]),
+        pad_display(header_label("branch"), widths["branch"]),
+        pad_display(header_label("provider"), widths["provider"]),
+        pad_display(header_label("session_id"), widths["session_id"]),
     ]
     if show_cwd:
-        labels.append(pad_display("CWD", widths["cwd"]))
-    labels.append(pad_display("Conversation", widths["conversation"]))
+        labels.append(pad_display(header_label("cwd"), widths["cwd"]))
+    labels.append(pad_display(header_label("conversation"), widths["conversation"]))
     return (" " * GUTTER).join(labels)
 
 
@@ -285,6 +346,59 @@ def load_sessions(cwd: str | None = None, all_cwds: bool = False) -> list[Sessio
     return rows
 
 
+def download_text(url: str) -> str:
+    with urllib.request.urlopen(url, timeout=30) as response:
+        return response.read().decode("utf-8")
+
+
+def ensure_executable(path: Path) -> None:
+    mode = path.stat().st_mode
+    path.chmod(mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+
+
+def install_to_local(
+    url: str = DEFAULT_SCRIPT_URL,
+    bin_dir: Path = DEFAULT_BIN_DIR,
+    command_name: str = "ls-cx-ss",
+) -> str:
+    target_dir = Path(bin_dir).expanduser()
+    target_dir.mkdir(parents=True, exist_ok=True)
+    target_path = target_dir / command_name
+    target_path.write_text(download_text(url), encoding="utf-8")
+    ensure_executable(target_path)
+    if str(target_dir) not in os.environ.get("PATH", "").split(os.pathsep):
+        return f"Installed to {target_path}. Add {target_dir} to PATH if needed."
+    return f"Installed to {target_path}."
+
+
+def parse_version(raw: str) -> tuple[int, ...]:
+    parts: list[int] = []
+    for item in raw.split("."):
+        try:
+            parts.append(int(item))
+        except ValueError:
+            break
+    return tuple(parts)
+
+
+def remote_version(url: str = DEFAULT_SCRIPT_URL) -> str | None:
+    match = VERSION_RE.search(download_text(url))
+    if not match:
+        return None
+    return match.group(1) or match.group(2)
+
+
+def check_for_update(current_version: str = APP_VERSION, url: str = DEFAULT_SCRIPT_URL) -> str:
+    latest = remote_version(url)
+    if not latest:
+        return "Update check failed: could not read remote version."
+    if parse_version(latest) > parse_version(current_version):
+        return f"Update available: {current_version} -> {latest}. Press i to install."
+    if parse_version(latest) == parse_version(current_version):
+        return f"Already up to date: {current_version}."
+    return f"Running newer build: {current_version} (remote {latest})."
+
+
 def prompt_input(stdscr, label: str, initial: str = "") -> str:
     height, width = stdscr.getmaxyx()
     try:
@@ -314,6 +428,47 @@ def materialize_rows(
     return sort_rows(filter_rows(rows, search), sort_key=sort_key, reverse=reverse)
 
 
+def resume_with_terminal(session_id: str) -> int:
+    if shutil.which("codex") is None:
+        raise RuntimeError("`codex` not found in PATH.")
+    with attached_terminal():
+        os.execvp("codex", ["codex", "resume", session_id])
+    return 0
+
+
+def draw_header(
+    stdscr,
+    widths: dict[str, int],
+    row_y: int,
+    sort_key: str,
+    reverse: bool,
+    show_cwd: bool,
+    width: int,
+) -> None:
+    fields = [
+        ("created", widths["created"]),
+        ("updated", widths["updated"]),
+        ("branch", widths["branch"]),
+        ("provider", widths["provider"]),
+        ("session_id", widths["session_id"]),
+    ]
+    if show_cwd:
+        fields.append(("cwd", widths["cwd"]))
+    fields.append(("conversation", widths["conversation"]))
+
+    x = 0
+    for idx, (key, cell_width) in enumerate(fields):
+        label = pad_display(header_label(key, sort_key, reverse), cell_width)
+        attr = curses.A_BOLD
+        if key == sort_key:
+            attr |= curses.A_REVERSE
+        stdscr.addnstr(row_y, x, label, max(0, width - x), attr)
+        x += cell_width
+        if idx != len(fields) - 1:
+            stdscr.addnstr(row_y, x, " " * GUTTER, max(0, width - x))
+            x += GUTTER
+
+
 def draw(
     stdscr,
     all_rows: Sequence[SessionRow],
@@ -324,22 +479,31 @@ def draw(
     sort_key: str,
     reverse: bool,
     show_cwd: bool,
+    status: str,
 ) -> None:
     stdscr.erase()
     height, width = stdscr.getmaxyx()
-    title = f"ls-cx-ss  cwd={os.getcwd()}  rows={len(visible_rows)}/{len(all_rows)}"
-    hint = f"/ search  s sort({sort_key})  r reverse({reverse})  Enter resume  q/Esc quit"
+    title = f"ls-cx-ss v{APP_VERSION}  cwd={os.getcwd()}  rows={len(visible_rows)}/{len(all_rows)}"
+    hint = f"/ search  s sort  r reverse  i install  u update  Enter resume  q/Esc quit"
     stdscr.addnstr(0, 0, truncate_display(title, width - 1), width - 1, curses.A_BOLD)
+    meta_row = 1
+    if status:
+        stdscr.addnstr(meta_row, 0, truncate_display(status, width - 1), width - 1)
+        meta_row += 1
     if search:
-        stdscr.addnstr(1, 0, truncate_display(f"search: {search}", width - 1), width - 1)
-        header_row = 3
-    else:
-        header_row = 2
+        stdscr.addnstr(meta_row, 0, truncate_display(f"search: {search}", width - 1), width - 1)
+        meta_row += 1
 
-    widths = compute_column_widths(visible_rows or all_rows, width - 1, show_cwd=show_cwd)
-    stdscr.addnstr(header_row, 0, format_header(widths, show_cwd=show_cwd), width - 1, curses.A_BOLD)
+    widths = compute_column_widths(
+        visible_rows or all_rows,
+        width - 1,
+        show_cwd=show_cwd,
+        active_sort=sort_key,
+        reverse=reverse,
+    )
+    draw_header(stdscr, widths, meta_row, sort_key, reverse, show_cwd, width - 1)
 
-    list_top = header_row + 1
+    list_top = meta_row + 1
     list_height = max(1, height - list_top - 1)
     for idx, row in enumerate(visible_rows[scroll : scroll + list_height]):
         attr = curses.A_REVERSE if scroll + idx == selected else curses.A_NORMAL
@@ -371,6 +535,7 @@ def run_picker(
     scroll = 0
     search = ""
     sort_index = SORT_KEYS.index(sort_key) if sort_key in SORT_KEYS else 0
+    status = "Ready. Enter resumes the selected session."
 
     while True:
         current_sort = SORT_KEYS[sort_index]
@@ -379,8 +544,8 @@ def run_picker(
             selected = max(0, len(visible_rows) - 1)
 
         height, _ = stdscr.getmaxyx()
-        header_rows = 4 if search else 3
-        list_height = max(1, height - header_rows - 1)
+        meta_rows = 2 + (1 if status else 0) + (1 if search else 0)
+        list_height = max(1, height - meta_rows - 1)
         if selected < scroll:
             scroll = selected
         elif selected >= scroll + list_height:
@@ -396,6 +561,7 @@ def run_picker(
             current_sort,
             reverse,
             show_cwd,
+            status,
         )
 
         key = stdscr.getch()
@@ -417,17 +583,30 @@ def run_picker(
             search = prompt_input(stdscr, "search> ", initial=search)
             selected = 0
             scroll = 0
+            status = f"Filtered rows with search={search!r}." if search else "Cleared search filter."
         elif key == ord("s"):
             sort_index = (sort_index + 1) % len(SORT_KEYS)
             selected = 0
             scroll = 0
+            status = f"Sorted by {SORT_KEYS[sort_index]}."
         elif key == ord("r"):
             reverse = not reverse
             selected = 0
             scroll = 0
+            status = f"Sort direction: {'descending' if reverse else 'ascending'}."
+        elif key == ord("i"):
+            try:
+                status = install_to_local()
+            except Exception as exc:
+                status = f"Install failed: {exc}"
+        elif key == ord("u"):
+            try:
+                status = check_for_update()
+            except Exception as exc:
+                status = f"Update check failed: {exc}"
         elif key in (10, 13, curses.KEY_ENTER):
             if visible_rows:
-                return visible_rows[selected].session_id
+                return resume_with_terminal(visible_rows[selected].session_id)
 
 
 def launch_tui(
@@ -507,8 +686,7 @@ def print_json(rows: list[SessionRow]) -> None:
 
 
 def resume_session(session_id: str) -> int:
-    os.execvp("codex", ["codex", "resume", session_id])
-    return 0
+    return resume_with_terminal(session_id)
 
 
 def main(argv: list[str] | None = None) -> int:
