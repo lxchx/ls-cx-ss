@@ -1,0 +1,51 @@
+name: Build Single-File Artifact
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: write
+
+jobs:
+  build-single-file:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Rebuild Pages single-file artifact
+        run: python scripts/build_single_file.py
+
+      - name: Verify Python sources compile
+        run: python -m py_compile ls_cx_ss/*.py docs/ls-cx-ss.py docs/install.py
+
+      - name: Fail if PR forgot to rebuild artifact
+        if: github.event_name == 'pull_request'
+        run: |
+          if git diff --quiet -- docs/ls-cx-ss.py; then
+            exit 0
+          fi
+          echo "::error::docs/ls-cx-ss.py is out of date. Run python3 scripts/build_single_file.py and commit the result."
+          git diff -- docs/ls-cx-ss.py
+          exit 1
+
+      - name: Commit rebuilt artifact on main
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: |
+          if git diff --quiet -- docs/ls-cx-ss.py; then
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add docs/ls-cx-ss.py
+          git commit -m "Build single-file artifact"
+          git push

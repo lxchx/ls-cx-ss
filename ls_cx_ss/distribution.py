@@ -12,7 +12,7 @@ from ls_cx_ss import __version__
 DEFAULT_SCRIPT_URL = "https://lxchx.github.io/ls-cx-ss/ls-cx-ss.py"
 DEFAULT_BIN_DIR = Path("~/.local/bin").expanduser()
 DEFAULT_COMMAND_NAME = "ls-cx-ss"
-VERSION_RE = re.compile(r'APP_VERSION = "([^"]+)"|__version__ = "([^"]+)"')
+VERSION_RE = re.compile(r'(?:APP_VERSION|__version__)\s*=\s*(?:"|\\"|\')([0-9][0-9A-Za-z._-]*)(?:"|\\"|\')')
 
 
 def download_text(url: str) -> str:
@@ -35,7 +35,7 @@ def _extract_version(raw: str) -> Optional[str]:
     match = VERSION_RE.search(raw)
     if not match:
         return None
-    return match.group(1) or match.group(2)
+    return match.group(1)
 
 
 def install_to_local(
@@ -90,7 +90,7 @@ def check_for_update(current_version: str = __version__, url: str = DEFAULT_SCRI
     if _parse_version(latest) > _parse_version(effective_current):
         return (
             f"Update available: {effective_current} -> {latest}. "
-            "Press uppercase I to install/update ~/.local/bin/ls-cx-ss."
+            "Press i to install/update ~/.local/bin/ls-cx-ss."
         )
     if _parse_version(latest) == _parse_version(effective_current):
         return f"Already up to date: {effective_current}."

@@ -1,0 +1,10 @@
+#!/bin/sh
+
+set -eu
+
+repo_root=$(git rev-parse --show-toplevel)
+cd "$repo_root"
+
+python3 scripts/build_single_file.py
+python3 -m py_compile ls_cx_ss/*.py docs/ls-cx-ss.py docs/install.py
+git add docs/ls-cx-ss.py

@@ -35,6 +35,15 @@ The Pages single-file output is generated from the package sources by:
 python3 scripts/build_single_file.py
 ```
 
+If you want this to happen automatically before each commit, enable the repo hook once:
+
+```bash
+git config core.hooksPath .githooks
+```
+
+That `pre-commit` hook rebuilds `docs/ls-cx-ss.py`, runs a quick `py_compile`
+check, and stages the regenerated file automatically.
+
 The current generator uses a small loader approach:
 
 - it reads each module under `ls_cx_ss/`

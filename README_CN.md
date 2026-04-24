@@ -35,6 +35,15 @@ Pages 单文件产物由下面这条命令从包源码生成：
 python3 scripts/build_single_file.py
 ```
 
+如果你希望它在每次提交前自动执行，可以先启用仓库自带的 hook：
+
+```bash
+git config core.hooksPath .githooks
+```
+
+这个 `pre-commit` hook 会自动重建 `docs/ls-cx-ss.py`，顺手跑一遍
+`py_compile`，然后把生成产物自动加进暂存区。
+
 当前生成器采用一个很小的 loader 方案：
 
 - 读取 `ls_cx_ss/` 下每个模块源码
