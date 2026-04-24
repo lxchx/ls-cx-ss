@@ -480,7 +480,10 @@ def check_for_update(current_version: str = APP_VERSION, url: str = DEFAULT_SCRI
     if not latest:
         return "Update check failed: could not read remote version."
     if parse_version(latest) > parse_version(current_version):
-        return f"Update available: {current_version} -> {latest}. Press I to install to local."
+        return (
+            f"Update available: {current_version} -> {latest}. "
+            "Press uppercase I to install/update ~/.local/bin/ls-cx-ss."
+        )
     if parse_version(latest) == parse_version(current_version):
         return f"Already up to date: {current_version}."
     return f"Running newer build: {current_version} (remote {latest})."
