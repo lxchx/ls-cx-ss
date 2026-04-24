@@ -10,11 +10,22 @@ from ls_cx_ss import __version__
 from ls_cx_ss.distribution import check_for_update, install_to_local
 from ls_cx_ss.model import SessionRow
 from ls_cx_ss.query import SORT_KEYS, filter_rows, sort_rows
-from ls_cx_ss.render import GUTTER, compute_column_widths, display_width, format_row, header_label, pad_display, truncate_display
+from ls_cx_ss.render import (
+    GUTTER,
+    display_slice,
+    display_width,
+    format_row,
+    full_column_widths,
+    header_label,
+    pad_display,
+    table_width,
+    truncate_display,
+)
 
 KEY_ESC = 27
 KEY_TAB = 9
 KEY_BACKSPACE_CODES = {curses.KEY_BACKSPACE, 127, 8}
+TUI_SORT_KEYS = ("updated", "created")
 
 
 @contextmanager
@@ -103,6 +114,13 @@ def sort_label(key: str, reverse: bool) -> str:
     return header_label(key, key, reverse).replace(" ↑", "").replace(" ↓", "")
 
 
+def next_sort_key(current_sort: str, step: int) -> str:
+    if current_sort not in TUI_SORT_KEYS:
+        return TUI_SORT_KEYS[0 if step > 0 else -1]
+    index = TUI_SORT_KEYS.index(current_sort)
+    return TUI_SORT_KEYS[(index + step) % len(TUI_SORT_KEYS)]
+
+
 def draw_header(
     stdscr,
     widths: dict[str, int],
@@ -111,6 +129,7 @@ def draw_header(
     reverse: bool,
     show_cwd: bool,
     width: int,
+    view_x: int,
     palette: dict[str, int],
 ) -> None:
     fields = [
@@ -133,27 +152,45 @@ def draw_header(
         attr = palette["header"]
         if key == sort_key:
             attr = palette["header_active"]
-        safe_addnstr(stdscr, row_y, x, label, remaining, attr)
+        safe_addnstr(stdscr, row_y, x, label, remaining, attr, view_x=view_x)
         x += cell_width
         if idx != len(fields) - 1:
             remaining = width - x
             if remaining <= 0:
                 break
-            safe_addnstr(stdscr, row_y, x, " " * GUTTER, remaining)
+            safe_addnstr(stdscr, row_y, x, " " * GUTTER, remaining, view_x=view_x)
             x += GUTTER
 
 
-def safe_addnstr(stdscr, y: int, x: int, text: str, limit: int, attr: int = 0) -> None:
+def safe_addnstr(
+    stdscr,
+    y: int,
+    x: int,
+    text: str,
+    limit: int,
+    attr: int = 0,
+    view_x: int = 0,
+) -> None:
     if limit <= 0:
         return
     max_y, max_x = stdscr.getmaxyx()
-    if y < 0 or y >= max_y or x < 0 or x >= max_x:
+    if y < 0 or y >= max_y:
         return
-    clipped = truncate_display(text, min(limit, max_x - x))
+    text_width = display_width(text)
+    view_end = view_x + limit
+    text_end = x + text_width
+    if text_end <= view_x or x >= view_end:
+        return
+    visible_start = max(0, view_x - x)
+    screen_x = max(0, x - view_x)
+    visible_width = min(text_width - visible_start, min(limit, max_x) - screen_x)
+    if visible_width <= 0 or screen_x >= max_x:
+        return
+    clipped = display_slice(text, visible_start, visible_width)
     if not clipped:
         return
     try:
-        stdscr.addnstr(y, x, clipped, min(limit, max_x - x), attr)
+        stdscr.addnstr(y, screen_x, clipped, min(visible_width, max_x - screen_x), attr)
     except curses.error:
         return
 
@@ -169,50 +206,61 @@ def draw(
     reverse: bool,
     show_cwd: bool,
     status: str,
+    horizontal_scroll: int,
     palette: dict[str, int],
 ) -> None:
     stdscr.erase()
     height, width = stdscr.getmaxyx()
+    content_width = max(1, width - 1)
     title = "Resume a previous session"
     current_sort_label = header_label(sort_key, sort_key, reverse)
     search_label = f"Search: {search}" if search else "Type to search"
-    footer = "enter resume  esc quit  tab sort  R reverse  I install  U update  ↑/↓ browse"
+    footer = "enter resume  esc quit  tab sort  R reverse  I install to local  U check update  ↑/↓ browse  ←/→ pan"
 
-    safe_addnstr(stdscr, 0, 0, title, width - 1, palette["title"])
-    sort_x = min(width - 1, display_width(title) + 2)
-    safe_addnstr(stdscr, 0, sort_x, "Sort: ", max(0, width - 1 - sort_x), palette["muted"])
+    safe_addnstr(stdscr, 0, 0, title, content_width, palette["title"])
+    sort_x = min(content_width, display_width(title) + 2)
+    safe_addnstr(stdscr, 0, sort_x, "Sort: ", max(0, content_width - sort_x), palette["muted"])
     safe_addnstr(
         stdscr,
         0,
         sort_x + len("Sort: "),
         current_sort_label,
-        max(0, width - 1 - sort_x - len("Sort: ")),
+        max(0, content_width - sort_x - len("Sort: ")),
         palette["accent"],
     )
-    safe_addnstr(stdscr, 1, 0, search_label, width - 1, palette["muted"] if not search else palette["accent"])
+    safe_addnstr(stdscr, 1, 0, search_label, content_width, palette["muted"] if not search else palette["accent"])
 
-    widths = compute_column_widths(
-        visible_rows or all_rows,
-        width - 1,
-        show_cwd=show_cwd,
-        active_sort=sort_key,
-        reverse=reverse,
-    )
+    widths = full_column_widths(visible_rows or all_rows, show_cwd=show_cwd, active_sort=sort_key, reverse=reverse)
+    max_horizontal_scroll = max(0, table_width(widths) - content_width)
+    horizontal_scroll = min(horizontal_scroll, max_horizontal_scroll)
     header_row = 2
-    draw_header(stdscr, widths, header_row, sort_key, reverse, show_cwd, width - 1, palette)
+    draw_header(stdscr, widths, header_row, sort_key, reverse, show_cwd, content_width, horizontal_scroll, palette)
 
     list_top = header_row + 1
     list_height = max(1, height - list_top - 2)
     for idx, row in enumerate(visible_rows[scroll : scroll + list_height]):
         attr = palette["selected"] if scroll + idx == selected else curses.A_NORMAL
-        safe_addnstr(stdscr, list_top + idx, 0, format_row(row, widths, show_cwd=show_cwd), width - 1, attr)
+        safe_addnstr(
+            stdscr,
+            list_top + idx,
+            0,
+            format_row(row, widths, show_cwd=show_cwd),
+            content_width,
+            attr,
+            view_x=horizontal_scroll,
+        )
     if not visible_rows:
         empty = "No matching sessions." if search else "No sessions found."
-        safe_addnstr(stdscr, list_top, 0, empty, width - 1, palette["muted"])
+        safe_addnstr(stdscr, list_top, 0, empty, content_width, palette["muted"])
+    elif max_horizontal_scroll > 0:
+        pan_status = f"Horizontal scroll: {horizontal_scroll}/{max_horizontal_scroll}"
+        safe_addnstr(stdscr, height - 2, 0, pan_status, content_width, palette["muted"])
     if status:
-        safe_addnstr(stdscr, height - 2, 0, status, width - 1, palette["status"])
-    safe_addnstr(stdscr, height - 1, 0, footer, width - 1, palette["muted"])
+        safe_addnstr(stdscr, height - 2, 0, status, content_width, palette["status"])
+    safe_addnstr(stdscr, height - 1, 0, footer, content_width, palette["muted"])
     stdscr.refresh()
+
+
 def run_picker(
     stdscr,
     rows: Sequence[SessionRow],
@@ -229,22 +277,25 @@ def run_picker(
 
     selected = 0
     scroll = 0
+    horizontal_scroll = 0
     search = ""
-    sort_index = SORT_KEYS.index(sort_key) if sort_key in SORT_KEYS else 0
+    current_sort = sort_key if sort_key in SORT_KEYS else TUI_SORT_KEYS[0]
     status = ""
 
     while True:
-        current_sort = SORT_KEYS[sort_index]
         visible_rows = materialize_rows(rows, search, current_sort, reverse)
         if selected >= len(visible_rows):
             selected = max(0, len(visible_rows) - 1)
 
-        height, _ = stdscr.getmaxyx()
+        height, width = stdscr.getmaxyx()
         list_height = max(1, height - 5)
         if selected < scroll:
             scroll = selected
         elif selected >= scroll + list_height:
             scroll = selected - list_height + 1
+        widths = full_column_widths(visible_rows or rows, show_cwd=show_cwd, active_sort=current_sort, reverse=reverse)
+        max_horizontal_scroll = max(0, table_width(widths) - max(1, width - 1))
+        horizontal_scroll = max(0, min(horizontal_scroll, max_horizontal_scroll))
 
         draw(
             stdscr,
@@ -257,6 +308,7 @@ def run_picker(
             reverse,
             show_cwd,
             status,
+            horizontal_scroll,
             palette,
         )
 
@@ -276,19 +328,28 @@ def run_picker(
         elif key == curses.KEY_END:
             selected = max(0, len(visible_rows) - 1)
         elif key in ("\t", KEY_TAB):
-            sort_index = (sort_index + 1) % len(SORT_KEYS)
+            current_sort = next_sort_key(current_sort, 1)
             selected = 0
             scroll = 0
-            status = f"Sorted by {sort_label(SORT_KEYS[sort_index], reverse)}."
+            horizontal_scroll = 0
+            status = f"Sorted by {sort_label(current_sort, reverse)}."
         elif key == curses.KEY_BTAB:
-            sort_index = (sort_index - 1) % len(SORT_KEYS)
+            current_sort = next_sort_key(current_sort, -1)
             selected = 0
             scroll = 0
-            status = f"Sorted by {sort_label(SORT_KEYS[sort_index], reverse)}."
+            horizontal_scroll = 0
+            status = f"Sorted by {sort_label(current_sort, reverse)}."
+        elif key == curses.KEY_LEFT:
+            horizontal_scroll = max(0, horizontal_scroll - max(4, width // 3))
+            status = ""
+        elif key == curses.KEY_RIGHT:
+            horizontal_scroll = min(max_horizontal_scroll, horizontal_scroll + max(4, width // 3))
+            status = ""
         elif key == "R":
             reverse = not reverse
             selected = 0
             scroll = 0
+            horizontal_scroll = 0
             status = f"Sort direction: {'descending' if reverse else 'ascending'}."
         elif key == "I":
             try:
@@ -302,17 +363,19 @@ def run_picker(
                 status = f"Update check failed: {exc}"
         elif key in ("\n", "\r", curses.KEY_ENTER):
             if visible_rows:
-                return resume_with_terminal(visible_rows[selected].session_id)
+                return visible_rows[selected].session_id
         elif key in KEY_BACKSPACE_CODES:
             search = search[:-1]
             selected = 0
             scroll = 0
+            horizontal_scroll = 0
             status = ""
         else:
             search, changed = handle_search_input(search, key)
             if changed:
                 selected = 0
                 scroll = 0
+                horizontal_scroll = 0
                 status = ""
 
 

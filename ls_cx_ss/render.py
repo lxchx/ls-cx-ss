@@ -63,9 +63,27 @@ def pad_display(text: str, width: int) -> str:
     return clipped + (" " * max(0, width - display_width(clipped)))
 
 
-def compute_column_widths(
+def display_slice(text: str, start: int, width: int) -> str:
+    if width <= 0:
+        return ""
+    out: list[str] = []
+    current = 0
+    end = start + width
+    for ch in text:
+        ch_width = char_width(ch)
+        next_current = current + ch_width
+        if next_current <= start:
+            current = next_current
+            continue
+        if current >= end:
+            break
+        out.append(ch)
+        current = next_current
+    return "".join(out)
+
+
+def base_column_widths(
     rows: Sequence[SessionRow],
-    total_width: int,
     show_cwd: bool = False,
     active_sort: str | None = None,
     reverse: bool = False,
@@ -106,27 +124,61 @@ def compute_column_widths(
                 max((display_width(r.cwd) for r in rows), default=0),
             ),
         )
+    return fixed
+
+
+def full_column_widths(
+    rows: Sequence[SessionRow],
+    show_cwd: bool = False,
+    active_sort: str | None = None,
+    reverse: bool = False,
+) -> dict[str, int]:
+    fixed = base_column_widths(rows, show_cwd=show_cwd, active_sort=active_sort, reverse=reverse)
+    conversation_width = max(
+        display_width(header_label("conversation", active_sort, reverse)),
+        max((display_width(r.conversation) for r in rows), default=0),
+    )
+    return {**fixed, "conversation": max(MIN_CONVO_WIDTH, conversation_width)}
+
+
+def table_width(widths: dict[str, int]) -> int:
+    return sum(widths.values()) + GUTTER * max(0, len(widths) - 1)
+
+
+def compute_column_widths(
+    rows: Sequence[SessionRow],
+    total_width: int,
+    show_cwd: bool = False,
+    active_sort: str | None = None,
+    reverse: bool = False,
+) -> dict[str, int]:
+    fixed = base_column_widths(rows, show_cwd=show_cwd, active_sort=active_sort, reverse=reverse)
     reserved = sum(fixed.values()) + (len(fixed) * GUTTER)
-    if reserved + 1 > total_width:
+    if reserved + MIN_CONVO_WIDTH > total_width:
         shrink_order = ["cwd", "branch", "session_id", "provider", "updated", "created"]
         for key in shrink_order:
-            while key in fixed and fixed[key] > MIN_COLUMN_WIDTH and (sum(fixed.values()) + len(fixed) * GUTTER + 1) > total_width:
+            while key in fixed and fixed[key] > MIN_COLUMN_WIDTH and (sum(fixed.values()) + len(fixed) * GUTTER + MIN_CONVO_WIDTH) > total_width:
                 fixed[key] -= 1
     convo_width = max(1, total_width - (sum(fixed.values()) + len(fixed) * GUTTER))
     return {**fixed, "conversation": convo_width}
 
 
-def format_header(widths: dict[str, int], show_cwd: bool = False) -> str:
+def format_header(
+    widths: dict[str, int],
+    show_cwd: bool = False,
+    active_sort: str | None = None,
+    reverse: bool = False,
+) -> str:
     labels = [
-        pad_display(header_label("created"), widths["created"]),
-        pad_display(header_label("updated"), widths["updated"]),
-        pad_display(header_label("branch"), widths["branch"]),
-        pad_display(header_label("provider"), widths["provider"]),
-        pad_display(header_label("session_id"), widths["session_id"]),
+        pad_display(header_label("created", active_sort, reverse), widths["created"]),
+        pad_display(header_label("updated", active_sort, reverse), widths["updated"]),
+        pad_display(header_label("branch", active_sort, reverse), widths["branch"]),
+        pad_display(header_label("provider", active_sort, reverse), widths["provider"]),
+        pad_display(header_label("session_id", active_sort, reverse), widths["session_id"]),
     ]
     if show_cwd:
-        labels.append(pad_display(header_label("cwd"), widths["cwd"]))
-    labels.append(pad_display(header_label("conversation"), widths["conversation"]))
+        labels.append(pad_display(header_label("cwd", active_sort, reverse), widths["cwd"]))
+    labels.append(pad_display(header_label("conversation", active_sort, reverse), widths["conversation"]))
     return (" " * GUTTER).join(labels)
 
 

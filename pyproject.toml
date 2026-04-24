@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ls-cx-ss"
-version = "0.3.0"
+version = "0.3.1"
 description = "List, search, sort, and resume Codex sessions across providers for the current working directory."
 readme = "README.md"
 requires-python = ">=3.10"

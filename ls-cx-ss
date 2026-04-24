@@ -26,7 +26,8 @@ MIN_COLUMN_WIDTH = 3
 KEY_ESC = 27
 KEY_TAB = 9
 KEY_BACKSPACE_CODES = {curses.KEY_BACKSPACE, 127, 8}
-APP_VERSION = "0.3.0"
+TUI_SORT_KEYS = ("updated", "created")
+APP_VERSION = "0.3.1"
 DEFAULT_SCRIPT_URL = "https://lxchx.github.io/ls-cx-ss/ls-cx-ss.py"
 DEFAULT_BIN_DIR = Path("~/.local/bin").expanduser()
 VERSION_RE = re.compile(r'APP_VERSION = "([^"]+)"|__version__ = "([^"]+)"')
@@ -139,11 +140,93 @@ def pad_display(text: str, width: int) -> str:
     return clipped + (" " * max(0, width - display_width(clipped)))
 
 
+def display_slice(text: str, start: int, width: int) -> str:
+    if width <= 0:
+        return ""
+    out: list[str] = []
+    current = 0
+    end = start + width
+    for ch in text:
+        ch_width = char_width(ch)
+        next_current = current + ch_width
+        if next_current <= start:
+            current = next_current
+            continue
+        if current >= end:
+            break
+        out.append(ch)
+        current = next_current
+    return "".join(out)
+
+
 def header_label(key: str, active_sort: str | None = None, reverse: bool = False) -> str:
     label = HEADER_LABELS[key]
     if key != active_sort:
         return label
     return f"{label}{' ↓' if reverse else ' ↑'}"
+
+
+def base_column_widths(
+    rows: Sequence[SessionRow],
+    show_cwd: bool = False,
+    active_sort: str | None = None,
+    reverse: bool = False,
+) -> dict[str, int]:
+    fixed = {
+        "created": max(
+            display_width(header_label("created", active_sort, reverse)),
+            max((display_width(ago(r.created_at)) for r in rows), default=0),
+        ),
+        "updated": max(
+            display_width(header_label("updated", active_sort, reverse)),
+            max((display_width(ago(r.updated_at)) for r in rows), default=0),
+        ),
+        "branch": min(
+            24,
+            max(
+                display_width(header_label("branch", active_sort, reverse)),
+                max((display_width(r.branch) for r in rows), default=0),
+            ),
+        ),
+        "provider": min(
+            16,
+            max(
+                display_width(header_label("provider", active_sort, reverse)),
+                max((display_width(r.provider) for r in rows), default=0),
+            ),
+        ),
+        "session_id": max(
+            display_width(header_label("session_id", active_sort, reverse)),
+            max((display_width(r.session_id) for r in rows), default=0),
+        ),
+    }
+    if show_cwd:
+        fixed["cwd"] = min(
+            32,
+            max(
+                display_width(header_label("cwd", active_sort, reverse)),
+                max((display_width(r.cwd) for r in rows), default=0),
+            ),
+        )
+    return fixed
+
+
+def full_column_widths(
+    rows: Sequence[SessionRow],
+    show_cwd: bool = False,
+    active_sort: str | None = None,
+    reverse: bool = False,
+) -> dict[str, int]:
+    fixed = base_column_widths(rows, show_cwd=show_cwd, active_sort=active_sort, reverse=reverse)
+    conversation_width = max(
+        display_width(header_label("conversation", active_sort, reverse)),
+        max((display_width(r.conversation) for r in rows), default=0),
+    )
+    return {**fixed, "conversation": max(MIN_CONVO_WIDTH, conversation_width)}
+
+
+def table_width(widths: dict[str, int]) -> int:
+    return sum(widths.values()) + GUTTER * max(0, len(widths) - 1)
 
 
 def sort_rows(
@@ -188,63 +271,33 @@ def compute_column_widths(
     active_sort: str | None = None,
     reverse: bool = False,
 ) -> dict[str, int]:
-    fixed = {
-        "created": max(
-            display_width(header_label("created", active_sort, reverse)),
-            max((display_width(ago(r.created_at)) for r in rows), default=0),
-        ),
-        "updated": max(
-            display_width(header_label("updated", active_sort, reverse)),
-            max((display_width(ago(r.updated_at)) for r in rows), default=0),
-        ),
-        "branch": min(
-            24,
-            max(
-                display_width(header_label("branch", active_sort, reverse)),
-                max((display_width(r.branch) for r in rows), default=0),
-            ),
-        ),
-        "provider": min(
-            16,
-            max(
-                display_width(header_label("provider", active_sort, reverse)),
-                max((display_width(r.provider) for r in rows), default=0),
-            ),
-        ),
-        "session_id": max(
-            display_width(header_label("session_id", active_sort, reverse)),
-            max((display_width(r.session_id) for r in rows), default=0),
-        ),
-    }
-    if show_cwd:
-        fixed["cwd"] = min(
-            32,
-            max(
-                display_width(header_label("cwd", active_sort, reverse)),
-                max((display_width(r.cwd) for r in rows), default=0),
-            ),
-        )
+    fixed = base_column_widths(rows, show_cwd=show_cwd, active_sort=active_sort, reverse=reverse)
     reserved = sum(fixed.values()) + (len(fixed) * GUTTER)
-    if reserved + 1 > total_width:
+    if reserved + MIN_CONVO_WIDTH > total_width:
         shrink_order = ["cwd", "branch", "session_id", "provider", "updated", "created"]
         for key in shrink_order:
-            while key in fixed and fixed[key] > MIN_COLUMN_WIDTH and (sum(fixed.values()) + len(fixed) * GUTTER + 1) > total_width:
+            while key in fixed and fixed[key] > MIN_COLUMN_WIDTH and (sum(fixed.values()) + len(fixed) * GUTTER + MIN_CONVO_WIDTH) > total_width:
                 fixed[key] -= 1
     convo_width = max(1, total_width - (sum(fixed.values()) + len(fixed) * GUTTER))
     return {**fixed, "conversation": convo_width}
 
 
-def format_header(widths: dict[str, int], show_cwd: bool = False) -> str:
+def format_header(
+    widths: dict[str, int],
+    show_cwd: bool = False,
+    active_sort: str | None = None,
+    reverse: bool = False,
+) -> str:
     labels = [
-        pad_display(header_label("created"), widths["created"]),
-        pad_display(header_label("updated"), widths["updated"]),
-        pad_display(header_label("branch"), widths["branch"]),
-        pad_display(header_label("provider"), widths["provider"]),
-        pad_display(header_label("session_id"), widths["session_id"]),
+        pad_display(header_label("created", active_sort, reverse), widths["created"]),
+        pad_display(header_label("updated", active_sort, reverse), widths["updated"]),
+        pad_display(header_label("branch", active_sort, reverse), widths["branch"]),
+        pad_display(header_label("provider", active_sort, reverse), widths["provider"]),
+        pad_display(header_label("session_id", active_sort, reverse), widths["session_id"]),
     ]
     if show_cwd:
-        labels.append(pad_display(header_label("cwd"), widths["cwd"]))
-    labels.append(pad_display(header_label("conversation"), widths["conversation"]))
+        labels.append(pad_display(header_label("cwd", active_sort, reverse), widths["cwd"]))
+    labels.append(pad_display(header_label("conversation", active_sort, reverse), widths["conversation"]))
     return (" " * GUTTER).join(labels)
 
 
@@ -394,7 +447,7 @@ def check_for_update(current_version: str = APP_VERSION, url: str = DEFAULT_SCRI
     if not latest:
         return "Update check failed: could not read remote version."
     if parse_version(latest) > parse_version(current_version):
-        return f"Update available: {current_version} -> {latest}. Press i to install."
+        return f"Update available: {current_version} -> {latest}. Press I to install to local."
     if parse_version(latest) == parse_version(current_version):
         return f"Already up to date: {current_version}."
     return f"Running newer build: {current_version} (remote {latest})."
@@ -461,6 +514,13 @@ def sort_label(key: str, reverse: bool) -> str:
     return header_label(key, key, reverse).replace(" ↑", "").replace(" ↓", "")
 
 
+def next_sort_key(current_sort: str, step: int) -> str:
+    if current_sort not in TUI_SORT_KEYS:
+        return TUI_SORT_KEYS[0 if step > 0 else -1]
+    index = TUI_SORT_KEYS.index(current_sort)
+    return TUI_SORT_KEYS[(index + step) % len(TUI_SORT_KEYS)]
+
+
 def draw_header(
     stdscr,
     widths: dict[str, int],
@@ -469,6 +529,7 @@ def draw_header(
     reverse: bool,
     show_cwd: bool,
     width: int,
+    view_x: int,
     palette: dict[str, int],
 ) -> None:
     fields = [
@@ -491,27 +552,45 @@ def draw_header(
         attr = palette["header"]
         if key == sort_key:
             attr = palette["header_active"]
-        safe_addnstr(stdscr, row_y, x, label, remaining, attr)
+        safe_addnstr(stdscr, row_y, x, label, remaining, attr, view_x=view_x)
         x += cell_width
         if idx != len(fields) - 1:
             remaining = width - x
             if remaining <= 0:
                 break
-            safe_addnstr(stdscr, row_y, x, " " * GUTTER, remaining)
+            safe_addnstr(stdscr, row_y, x, " " * GUTTER, remaining, view_x=view_x)
             x += GUTTER
 
 
-def safe_addnstr(stdscr, y: int, x: int, text: str, limit: int, attr: int = 0) -> None:
+def safe_addnstr(
+    stdscr,
+    y: int,
+    x: int,
+    text: str,
+    limit: int,
+    attr: int = 0,
+    view_x: int = 0,
+) -> None:
     if limit <= 0:
         return
     max_y, max_x = stdscr.getmaxyx()
-    if y < 0 or y >= max_y or x < 0 or x >= max_x:
+    if y < 0 or y >= max_y:
         return
-    clipped = truncate_display(text, min(limit, max_x - x))
+    text_width = display_width(text)
+    view_end = view_x + limit
+    text_end = x + text_width
+    if text_end <= view_x or x >= view_end:
+        return
+    visible_start = max(0, view_x - x)
+    screen_x = max(0, x - view_x)
+    visible_width = min(text_width - visible_start, min(limit, max_x) - screen_x)
+    if visible_width <= 0 or screen_x >= max_x:
+        return
+    clipped = display_slice(text, visible_start, visible_width)
     if not clipped:
         return
     try:
-        stdscr.addnstr(y, x, clipped, min(limit, max_x - x), attr)
+        stdscr.addnstr(y, screen_x, clipped, min(visible_width, max_x - screen_x), attr)
     except curses.error:
         return
 
@@ -527,49 +606,58 @@ def draw(
     reverse: bool,
     show_cwd: bool,
     status: str,
+    horizontal_scroll: int,
     palette: dict[str, int],
 ) -> None:
     stdscr.erase()
     height, width = stdscr.getmaxyx()
+    content_width = max(1, width - 1)
     title = "Resume a previous session"
     current_sort_label = header_label(sort_key, sort_key, reverse)
     search_label = f"Search: {search}" if search else "Type to search"
-    footer = "enter resume  esc quit  tab sort  R reverse  I install  U update  ↑/↓ browse"
+    footer = "enter resume  esc quit  tab sort  R reverse  I install to local  U check update  ↑/↓ browse  ←/→ pan"
 
-    safe_addnstr(stdscr, 0, 0, title, width - 1, palette["title"])
-    sort_x = min(width - 1, display_width(title) + 2)
-    safe_addnstr(stdscr, 0, sort_x, "Sort: ", max(0, width - 1 - sort_x), palette["muted"])
+    safe_addnstr(stdscr, 0, 0, title, content_width, palette["title"])
+    sort_x = min(content_width, display_width(title) + 2)
+    safe_addnstr(stdscr, 0, sort_x, "Sort: ", max(0, content_width - sort_x), palette["muted"])
     safe_addnstr(
         stdscr,
         0,
         sort_x + len("Sort: "),
         current_sort_label,
-        max(0, width - 1 - sort_x - len("Sort: ")),
+        max(0, content_width - sort_x - len("Sort: ")),
         palette["accent"],
     )
-    safe_addnstr(stdscr, 1, 0, search_label, width - 1, palette["muted"] if not search else palette["accent"])
+    safe_addnstr(stdscr, 1, 0, search_label, content_width, palette["muted"] if not search else palette["accent"])
 
-    widths = compute_column_widths(
-        visible_rows or all_rows,
-        width - 1,
-        show_cwd=show_cwd,
-        active_sort=sort_key,
-        reverse=reverse,
-    )
+    widths = full_column_widths(visible_rows or all_rows, show_cwd=show_cwd, active_sort=sort_key, reverse=reverse)
+    max_horizontal_scroll = max(0, table_width(widths) - content_width)
+    horizontal_scroll = min(horizontal_scroll, max_horizontal_scroll)
     header_row = 2
-    draw_header(stdscr, widths, header_row, sort_key, reverse, show_cwd, width - 1, palette)
+    draw_header(stdscr, widths, header_row, sort_key, reverse, show_cwd, content_width, horizontal_scroll, palette)
 
     list_top = header_row + 1
     list_height = max(1, height - list_top - 2)
     for idx, row in enumerate(visible_rows[scroll : scroll + list_height]):
         attr = palette["selected"] if scroll + idx == selected else curses.A_NORMAL
-        safe_addnstr(stdscr, list_top + idx, 0, format_row(row, widths, show_cwd=show_cwd), width - 1, attr)
+        safe_addnstr(
+            stdscr,
+            list_top + idx,
+            0,
+            format_row(row, widths, show_cwd=show_cwd),
+            content_width,
+            attr,
+            view_x=horizontal_scroll,
+        )
     if not visible_rows:
         empty = "No matching sessions." if search else "No sessions found."
-        safe_addnstr(stdscr, list_top, 0, empty, width - 1, palette["muted"])
+        safe_addnstr(stdscr, list_top, 0, empty, content_width, palette["muted"])
+    elif max_horizontal_scroll > 0:
+        pan_status = f"Horizontal scroll: {horizontal_scroll}/{max_horizontal_scroll}"
+        safe_addnstr(stdscr, height - 2, 0, pan_status, content_width, palette["muted"])
     if status:
-        safe_addnstr(stdscr, height - 2, 0, status, width - 1, palette["status"])
-    safe_addnstr(stdscr, height - 1, 0, footer, width - 1, palette["muted"])
+        safe_addnstr(stdscr, height - 2, 0, status, content_width, palette["status"])
+    safe_addnstr(stdscr, height - 1, 0, footer, content_width, palette["muted"])
     stdscr.refresh()
 
 
@@ -589,22 +677,25 @@ def run_picker(
 
     selected = 0
     scroll = 0
+    horizontal_scroll = 0
     search = ""
-    sort_index = SORT_KEYS.index(sort_key) if sort_key in SORT_KEYS else 0
+    current_sort = sort_key if sort_key in SORT_KEYS else TUI_SORT_KEYS[0]
     status = ""
 
     while True:
-        current_sort = SORT_KEYS[sort_index]
         visible_rows = materialize_rows(rows, search, current_sort, reverse)
         if selected >= len(visible_rows):
             selected = max(0, len(visible_rows) - 1)
 
-        height, _ = stdscr.getmaxyx()
+        height, width = stdscr.getmaxyx()
         list_height = max(1, height - 5)
         if selected < scroll:
             scroll = selected
         elif selected >= scroll + list_height:
             scroll = selected - list_height + 1
+        widths = full_column_widths(visible_rows or rows, show_cwd=show_cwd, active_sort=current_sort, reverse=reverse)
+        max_horizontal_scroll = max(0, table_width(widths) - max(1, width - 1))
+        horizontal_scroll = max(0, min(horizontal_scroll, max_horizontal_scroll))
 
         draw(
             stdscr,
@@ -617,6 +708,7 @@ def run_picker(
             reverse,
             show_cwd,
             status,
+            horizontal_scroll,
             palette,
         )
 
@@ -636,19 +728,28 @@ def run_picker(
         elif key == curses.KEY_END:
             selected = max(0, len(visible_rows) - 1)
         elif key in ("\t", KEY_TAB):
-            sort_index = (sort_index + 1) % len(SORT_KEYS)
+            current_sort = next_sort_key(current_sort, 1)
             selected = 0
             scroll = 0
-            status = f"Sorted by {sort_label(SORT_KEYS[sort_index], reverse)}."
+            horizontal_scroll = 0
+            status = f"Sorted by {sort_label(current_sort, reverse)}."
         elif key == curses.KEY_BTAB:
-            sort_index = (sort_index - 1) % len(SORT_KEYS)
+            current_sort = next_sort_key(current_sort, -1)
             selected = 0
             scroll = 0
-            status = f"Sorted by {sort_label(SORT_KEYS[sort_index], reverse)}."
+            horizontal_scroll = 0
+            status = f"Sorted by {sort_label(current_sort, reverse)}."
+        elif key == curses.KEY_LEFT:
+            horizontal_scroll = max(0, horizontal_scroll - max(4, width // 3))
+            status = ""
+        elif key == curses.KEY_RIGHT:
+            horizontal_scroll = min(max_horizontal_scroll, horizontal_scroll + max(4, width // 3))
+            status = ""
         elif key == "R":
             reverse = not reverse
             selected = 0
             scroll = 0
+            horizontal_scroll = 0
             status = f"Sort direction: {'descending' if reverse else 'ascending'}."
         elif key == "I":
             try:
@@ -662,17 +763,19 @@ def run_picker(
                 status = f"Update check failed: {exc}"
         elif key in ("\n", "\r", curses.KEY_ENTER):
             if visible_rows:
-                return resume_with_terminal(visible_rows[selected].session_id)
+                return visible_rows[selected].session_id
         elif key in KEY_BACKSPACE_CODES:
             search = search[:-1]
             selected = 0
             scroll = 0
+            horizontal_scroll = 0
             status = ""
         else:
             search, changed = handle_search_input(search, key)
             if changed:
                 selected = 0
                 scroll = 0
+                horizontal_scroll = 0
                 status = ""
 
 
