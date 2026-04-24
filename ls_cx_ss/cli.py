@@ -6,7 +6,7 @@ import sys
 from typing import List, Optional
 
 from ls_cx_ss.query import SORT_KEYS, filter_rows, sort_rows
-from ls_cx_ss.render import compute_column_widths, format_header, format_row
+from ls_cx_ss.render import compute_column_widths, format_header, format_row, full_column_widths
 from ls_cx_ss.scanner import load_sessions
 from ls_cx_ss.timefmt import ago
 from ls_cx_ss.tui import launch_tui, resume_with_terminal
@@ -53,7 +53,10 @@ def materialize_rows(args) -> list:
 
 
 def print_table(rows: list, show_cwd: bool) -> None:
-    widths = compute_column_widths(rows, shutil.get_terminal_size((160, 24)).columns - 1, show_cwd=show_cwd)
+    if sys.stdout.isatty():
+        widths = compute_column_widths(rows, shutil.get_terminal_size((160, 24)).columns - 1, show_cwd=show_cwd)
+    else:
+        widths = full_column_widths(rows, show_cwd=show_cwd)
     print(format_header(widths, show_cwd=show_cwd))
     for row in rows:
         print(format_row(row, widths, show_cwd=show_cwd))

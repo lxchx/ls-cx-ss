@@ -885,7 +885,10 @@ def load_materialized_rows(args) -> List[SessionRow]:
 
 
 def print_table(rows: List[SessionRow], show_cwd: bool) -> None:
-    widths = compute_column_widths(rows, shutil.get_terminal_size((160, 24)).columns - 1, show_cwd=show_cwd)
+    if sys.stdout.isatty():
+        widths = compute_column_widths(rows, shutil.get_terminal_size((160, 24)).columns - 1, show_cwd=show_cwd)
+    else:
+        widths = full_column_widths(rows, show_cwd=show_cwd)
     print(format_header(widths, show_cwd=show_cwd))
     for row in rows:
         print(format_row(row, widths, show_cwd=show_cwd))
