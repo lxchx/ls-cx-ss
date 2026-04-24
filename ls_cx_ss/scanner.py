@@ -1,8 +1,7 @@
-from __future__ import annotations
-
 import json
 import os
 from pathlib import Path
+from typing import List, Optional
 
 from ls_cx_ss.model import SessionRow
 from ls_cx_ss.timefmt import parse_timestamp, utc_from_timestamp
@@ -49,10 +48,10 @@ def read_conversation_preview(handle) -> str:
     return "(no message yet)"
 
 
-def load_sessions(cwd: str | None = None, all_cwds: bool = False) -> list[SessionRow]:
+def load_sessions(cwd: Optional[str] = None, all_cwds: bool = False) -> List[SessionRow]:
     root = session_root()
     current_cwd = os.path.realpath(cwd or os.getcwd())
-    rows: list[SessionRow] = []
+    rows: List[SessionRow] = []
     if not root.exists():
         return rows
 

@@ -1,10 +1,9 @@
-from __future__ import annotations
-
 import os
 import re
 import stat
 import urllib.request
 from pathlib import Path
+from typing import List, Optional, Tuple
 
 from ls_cx_ss import __version__
 
@@ -40,8 +39,8 @@ def install_to_local(
     return f"Installed to {target_path}."
 
 
-def _parse_version(raw: str) -> tuple[int, ...]:
-    parts: list[int] = []
+def _parse_version(raw: str) -> Tuple[int, ...]:
+    parts: List[int] = []
     for item in raw.split("."):
         try:
             parts.append(int(item))
@@ -50,7 +49,7 @@ def _parse_version(raw: str) -> tuple[int, ...]:
     return tuple(parts)
 
 
-def remote_version(url: str = DEFAULT_SCRIPT_URL) -> str | None:
+def remote_version(url: str = DEFAULT_SCRIPT_URL) -> Optional[str]:
     match = VERSION_RE.search(download_text(url))
     if not match:
         return None

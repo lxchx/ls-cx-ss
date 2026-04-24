@@ -1,10 +1,8 @@
-from __future__ import annotations
-
 import curses
 import os
 import shutil
 from contextlib import contextmanager
-from collections.abc import Sequence
+from typing import Dict, Optional, Sequence, Tuple
 
 from ls_cx_ss import __version__
 from ls_cx_ss.distribution import check_for_update, install_to_local
@@ -40,7 +38,7 @@ def attached_terminal():
     except OSError as exc:
         raise RuntimeError("This command needs an interactive terminal.") from exc
 
-    saved_fds: dict[int, int] = {}
+    saved_fds = {}  # type: Dict[int, int]
     try:
         for fd in missing_fds:
             saved_fds[fd] = os.dup(fd)
@@ -53,7 +51,7 @@ def attached_terminal():
         os.close(tty_fd)
 
 
-def init_palette() -> dict[str, int]:
+def init_palette() -> Dict[str, int]:
     palette = {
         "title": curses.A_BOLD,
         "accent": curses.A_BOLD,
@@ -84,7 +82,7 @@ def init_palette() -> dict[str, int]:
 
 def materialize_rows(
     rows: Sequence[SessionRow], search: str, sort_key: str, reverse: bool
-) -> list[SessionRow]:
+):
     return sort_rows(filter_rows(rows, search), sort_key=sort_key, reverse=reverse)
 
 
@@ -96,7 +94,7 @@ def resume_with_terminal(session_id: str) -> int:
     return 0
 
 
-def handle_search_input(search: str, key) -> tuple[str, bool]:
+def handle_search_input(search: str, key) -> Tuple[str, bool]:
     if key == "\t":
         return search, False
     if key in ("\n", "\r", "\x1b"):
@@ -123,14 +121,14 @@ def next_sort_key(current_sort: str, step: int) -> str:
 
 def draw_header(
     stdscr,
-    widths: dict[str, int],
+    widths: Dict[str, int],
     row_y: int,
     sort_key: str,
     reverse: bool,
     show_cwd: bool,
     width: int,
     view_x: int,
-    palette: dict[str, int],
+    palette: Dict[str, int],
 ) -> None:
     fields = [
         ("created", widths["created"]),
@@ -207,7 +205,7 @@ def draw(
     show_cwd: bool,
     status: str,
     horizontal_scroll: int,
-    palette: dict[str, int],
+    palette: Dict[str, int],
 ) -> None:
     stdscr.erase()
     height, width = stdscr.getmaxyx()
@@ -267,7 +265,7 @@ def run_picker(
     sort_key: str = "updated",
     reverse: bool = True,
     show_cwd: bool = False,
-) -> str | None:
+) -> Optional[str]:
     try:
         curses.curs_set(0)
     except curses.error:
@@ -381,7 +379,7 @@ def run_picker(
 
 def launch_tui(
     rows: Sequence[SessionRow], sort_key: str = "updated", reverse: bool = True, show_cwd: bool = False
-) -> str | None:
+) -> Optional[str]:
     if shutil.which("codex") is None:
         raise RuntimeError("`codex` not found in PATH.")
     with attached_terminal():

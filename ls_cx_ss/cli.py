@@ -1,10 +1,10 @@
-from __future__ import annotations
-
 import argparse
 import json
 import os
 import shutil
 import sys
+from typing import List, Optional
+
 from ls_cx_ss.query import SORT_KEYS, filter_rows, sort_rows
 from ls_cx_ss.render import compute_column_widths, format_header, format_row
 from ls_cx_ss.scanner import load_sessions
@@ -16,7 +16,7 @@ KNOWN_COMMANDS = {"list", "tui", "resume"}
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="ls-cx-ss")
-    sub = parser.add_subparsers(dest="command", required=True)
+    sub = parser.add_subparsers(dest="command")
 
     common = argparse.ArgumentParser(add_help=False)
     common.add_argument("--all-cwds", action="store_true", help="Show sessions across all working directories.")
@@ -82,7 +82,7 @@ def resume_session(session_id: str) -> int:
     return resume_with_terminal(session_id)
 
 
-def normalize_argv(argv: list[str]) -> list[str]:
+def normalize_argv(argv: List[str]) -> List[str]:
     if not argv:
         return ["tui"]
     if argv[0] == "help":
@@ -96,11 +96,13 @@ def normalize_argv(argv: list[str]) -> list[str]:
     return argv
 
 
-def main(argv: list[str] | None = None) -> int:
+def main(argv: Optional[List[str]] = None) -> int:
     argv = normalize_argv(list(sys.argv[1:] if argv is None else argv))
 
     parser = build_parser()
     args = parser.parse_args(argv)
+    if not getattr(args, "command", None):
+        parser.error("a command is required")
 
     if args.command == "resume":
         return resume_session(args.session_id)

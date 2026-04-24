@@ -28,6 +28,8 @@ chmod +x ./ls-cx-ss
 ./ls-cx-ss list
 ```
 
+The packaged and single-file entry points are intended to run on Python 3.6+.
+
 ## GitHub Pages URL usage
 
 The project also supports GitHub Pages distribution, so you can use it directly from a URL:

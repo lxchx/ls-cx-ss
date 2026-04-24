@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-from __future__ import annotations
 
 import argparse
 import os
@@ -7,6 +6,7 @@ import stat
 import sys
 import urllib.request
 from pathlib import Path
+from typing import List, Optional
 
 DEFAULT_SCRIPT_URL = "https://lxchx.github.io/ls-cx-ss/ls-cx-ss.py"
 DEFAULT_BIN_DIR = Path("~/.local/bin").expanduser()
@@ -50,7 +50,7 @@ def ensure_executable(path: Path) -> None:
     path.chmod(mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
 
 
-def main(argv: list[str] | None = None) -> int:
+def main(argv: Optional[List[str]] = None) -> int:
     args = build_parser().parse_args(argv)
     target_dir = Path(args.bin_dir).expanduser()
     target_dir.mkdir(parents=True, exist_ok=True)

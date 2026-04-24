@@ -1,6 +1,4 @@
-from __future__ import annotations
-
-from collections.abc import Iterable
+from typing import Iterable, List, Optional
 
 from ls_cx_ss.model import SessionRow
 
@@ -8,8 +6,8 @@ SORT_KEYS = ("updated", "created", "provider", "branch", "session_id")
 
 
 def sort_rows(
-    rows: Iterable[SessionRow], sort_key: str = "updated", reverse: bool | None = None
-) -> list[SessionRow]:
+    rows: Iterable[SessionRow], sort_key: str = "updated", reverse: Optional[bool] = None
+) -> List[SessionRow]:
     items = list(rows)
     key = sort_key if sort_key in SORT_KEYS else "updated"
 
@@ -27,7 +25,7 @@ def sort_rows(
     return sorted(items, key=lambda row: (row.session_id.casefold(), row.updated_at), reverse=reverse)
 
 
-def filter_rows(rows: Iterable[SessionRow], search: str) -> list[SessionRow]:
+def filter_rows(rows: Iterable[SessionRow], search: str) -> List[SessionRow]:
     term = search.strip().casefold()
     if not term:
         return list(rows)

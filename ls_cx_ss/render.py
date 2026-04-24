@@ -1,7 +1,5 @@
-from __future__ import annotations
-
 import unicodedata
-from collections.abc import Sequence
+from typing import Dict, List, Optional, Sequence
 
 from ls_cx_ss.model import SessionRow
 from ls_cx_ss.timefmt import ago
@@ -20,7 +18,7 @@ HEADER_LABELS = {
 }
 
 
-def header_label(key: str, active_sort: str | None = None, reverse: bool = False) -> str:
+def header_label(key: str, active_sort: Optional[str] = None, reverse: bool = False) -> str:
     label = HEADER_LABELS[key]
     if key != active_sort:
         return label
@@ -47,7 +45,7 @@ def truncate_display(text: str, width: int) -> str:
     if width <= 3:
         return "." * width
     target = width - 3
-    out: list[str] = []
+    out: List[str] = []
     current = 0
     for ch in text:
         w = char_width(ch)
@@ -66,7 +64,7 @@ def pad_display(text: str, width: int) -> str:
 def display_slice(text: str, start: int, width: int) -> str:
     if width <= 0:
         return ""
-    out: list[str] = []
+    out: List[str] = []
     current = 0
     end = start + width
     for ch in text:
@@ -85,9 +83,9 @@ def display_slice(text: str, start: int, width: int) -> str:
 def base_column_widths(
     rows: Sequence[SessionRow],
     show_cwd: bool = False,
-    active_sort: str | None = None,
+    active_sort: Optional[str] = None,
     reverse: bool = False,
-) -> dict[str, int]:
+) -> Dict[str, int]:
     fixed = {
         "created": max(
             display_width(header_label("created", active_sort, reverse)),
@@ -130,9 +128,9 @@ def base_column_widths(
 def full_column_widths(
     rows: Sequence[SessionRow],
     show_cwd: bool = False,
-    active_sort: str | None = None,
+    active_sort: Optional[str] = None,
     reverse: bool = False,
-) -> dict[str, int]:
+) -> Dict[str, int]:
     fixed = base_column_widths(rows, show_cwd=show_cwd, active_sort=active_sort, reverse=reverse)
     conversation_width = max(
         display_width(header_label("conversation", active_sort, reverse)),
@@ -141,7 +139,7 @@ def full_column_widths(
     return {**fixed, "conversation": max(MIN_CONVO_WIDTH, conversation_width)}
 
 
-def table_width(widths: dict[str, int]) -> int:
+def table_width(widths: Dict[str, int]) -> int:
     return sum(widths.values()) + GUTTER * max(0, len(widths) - 1)
 
 
@@ -149,9 +147,9 @@ def compute_column_widths(
     rows: Sequence[SessionRow],
     total_width: int,
     show_cwd: bool = False,
-    active_sort: str | None = None,
+    active_sort: Optional[str] = None,
     reverse: bool = False,
-) -> dict[str, int]:
+) -> Dict[str, int]:
     fixed = base_column_widths(rows, show_cwd=show_cwd, active_sort=active_sort, reverse=reverse)
     reserved = sum(fixed.values()) + (len(fixed) * GUTTER)
     if reserved + MIN_CONVO_WIDTH > total_width:
@@ -164,9 +162,9 @@ def compute_column_widths(
 
 
 def format_header(
-    widths: dict[str, int],
+    widths: Dict[str, int],
     show_cwd: bool = False,
-    active_sort: str | None = None,
+    active_sort: Optional[str] = None,
     reverse: bool = False,
 ) -> str:
     labels = [
@@ -182,7 +180,7 @@ def format_header(
     return (" " * GUTTER).join(labels)
 
 
-def format_row(row: SessionRow, widths: dict[str, int], show_cwd: bool = False) -> str:
+def format_row(row: SessionRow, widths: Dict[str, int], show_cwd: bool = False) -> str:
     parts = [
         pad_display(ago(row.created_at), widths["created"]),
         pad_display(ago(row.updated_at), widths["updated"]),

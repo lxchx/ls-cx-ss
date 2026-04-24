@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-from __future__ import annotations
 
 import argparse
 import curses
@@ -13,10 +12,9 @@ import stat
 import urllib.request
 import unicodedata
 from contextlib import contextmanager
-from collections.abc import Iterable, Sequence
-from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Dict, Iterable, List, NamedTuple, Optional, Sequence, Tuple, Union
 
 SORT_KEYS = ("updated", "created", "provider", "branch", "session_id")
 HEAD_SCAN_LINES = 12
@@ -27,10 +25,11 @@ KEY_ESC = 27
 KEY_TAB = 9
 KEY_BACKSPACE_CODES = {curses.KEY_BACKSPACE, 127, 8}
 TUI_SORT_KEYS = ("updated", "created")
-APP_VERSION = "0.3.3"
+APP_VERSION = "0.3.4"
 DEFAULT_SCRIPT_URL = "https://lxchx.github.io/ls-cx-ss/ls-cx-ss.py"
 DEFAULT_BIN_DIR = Path("~/.local/bin").expanduser()
 VERSION_RE = re.compile(r'APP_VERSION = "([^"]+)"|__version__ = "([^"]+)"')
+ISO_TZ_RE = re.compile(r"([+-]\d{2}):?(\d{2})$")
 KNOWN_COMMANDS = {"list", "tui", "resume"}
 HEADER_LABELS = {
     "created": "Created",
@@ -42,15 +41,7 @@ HEADER_LABELS = {
     "conversation": "Conversation",
 }
 
-
-def compat_dataclass(cls):
-    if sys.version_info >= (3, 10):
-        return dataclass(slots=True)(cls)
-    return dataclass(cls)
-
-
-@compat_dataclass
-class SessionRow:
+class SessionRow(NamedTuple):
     created_at: datetime
     updated_at: datetime
     branch: str
@@ -73,7 +64,7 @@ def attached_terminal():
     except OSError as exc:
         raise RuntimeError("This command needs an interactive terminal.") from exc
 
-    saved_fds: dict[int, int] = {}
+    saved_fds = {}  # type: Dict[int, int]
     try:
         for fd in missing_fds:
             saved_fds[fd] = os.dup(fd)
@@ -86,17 +77,45 @@ def attached_terminal():
         os.close(tty_fd)
 
 
-def parse_timestamp(raw: str | datetime) -> datetime:
+def _normalize_iso8601(raw: str) -> str:
+    value = raw.strip()
+    if value.endswith("Z"):
+        return value[:-1] + "+0000"
+    match = ISO_TZ_RE.search(value)
+    if match:
+        return "{0}{1}{2}".format(value[: match.start()], match.group(1), match.group(2))
+    return value
+
+
+def parse_timestamp(raw: Union[str, datetime]) -> datetime:
     if isinstance(raw, datetime):
+        if raw.tzinfo is None:
+            return raw.replace(tzinfo=timezone.utc)
         return raw
-    return datetime.fromisoformat(raw.replace("Z", "+00:00"))
+
+    normalized = _normalize_iso8601(raw)
+    formats = (
+        "%Y-%m-%dT%H:%M:%S.%f%z",
+        "%Y-%m-%dT%H:%M:%S%z",
+        "%Y-%m-%dT%H:%M:%S.%f",
+        "%Y-%m-%dT%H:%M:%S",
+    )
+    for fmt in formats:
+        try:
+            parsed = datetime.strptime(normalized, fmt)
+            if parsed.tzinfo is None:
+                return parsed.replace(tzinfo=timezone.utc)
+            return parsed
+        except ValueError:
+            continue
+    raise ValueError("Unsupported timestamp: {0}".format(raw))
 
 
 def utc_from_timestamp(ts: float) -> datetime:
     return datetime.fromtimestamp(ts, tz=timezone.utc)
 
 
-def ago(ts: str | datetime) -> str:
+def ago(ts: Union[str, datetime]) -> str:
     dt = parse_timestamp(ts)
     seconds = max(0, int(time.time() - dt.timestamp()))
     if seconds < 60:
@@ -131,7 +150,7 @@ def truncate_display(text: str, width: int) -> str:
     if width <= 3:
         return "." * width
     target = width - 3
-    out: list[str] = []
+    out: List[str] = []
     current = 0
     for ch in text:
         w = char_width(ch)
@@ -150,7 +169,7 @@ def pad_display(text: str, width: int) -> str:
 def display_slice(text: str, start: int, width: int) -> str:
     if width <= 0:
         return ""
-    out: list[str] = []
+    out: List[str] = []
     current = 0
     end = start + width
     for ch in text:
@@ -166,7 +185,7 @@ def display_slice(text: str, start: int, width: int) -> str:
     return "".join(out)
 
 
-def header_label(key: str, active_sort: str | None = None, reverse: bool = False) -> str:
+def header_label(key: str, active_sort: Optional[str] = None, reverse: bool = False) -> str:
     label = HEADER_LABELS[key]
     if key != active_sort:
         return label
@@ -176,9 +195,9 @@ def header_label(key: str, active_sort: str | None = None, reverse: bool = False
 def base_column_widths(
     rows: Sequence[SessionRow],
     show_cwd: bool = False,
-    active_sort: str | None = None,
+    active_sort: Optional[str] = None,
     reverse: bool = False,
-) -> dict[str, int]:
+) -> Dict[str, int]:
     fixed = {
         "created": max(
             display_width(header_label("created", active_sort, reverse)),
@@ -221,9 +240,9 @@ def base_column_widths(
 def full_column_widths(
     rows: Sequence[SessionRow],
     show_cwd: bool = False,
-    active_sort: str | None = None,
+    active_sort: Optional[str] = None,
     reverse: bool = False,
-) -> dict[str, int]:
+) -> Dict[str, int]:
     fixed = base_column_widths(rows, show_cwd=show_cwd, active_sort=active_sort, reverse=reverse)
     conversation_width = max(
         display_width(header_label("conversation", active_sort, reverse)),
@@ -232,13 +251,13 @@ def full_column_widths(
     return {**fixed, "conversation": max(MIN_CONVO_WIDTH, conversation_width)}
 
 
-def table_width(widths: dict[str, int]) -> int:
+def table_width(widths: Dict[str, int]) -> int:
     return sum(widths.values()) + GUTTER * max(0, len(widths) - 1)
 
 
 def sort_rows(
-    rows: Iterable[SessionRow], sort_key: str = "updated", reverse: bool | None = None
-) -> list[SessionRow]:
+    rows: Iterable[SessionRow], sort_key: str = "updated", reverse: Optional[bool] = None
+) -> List[SessionRow]:
     items = list(rows)
     key = sort_key if sort_key in SORT_KEYS else "updated"
 
@@ -256,7 +275,7 @@ def sort_rows(
     return sorted(items, key=lambda row: (row.session_id.casefold(), row.updated_at), reverse=reverse)
 
 
-def filter_rows(rows: Iterable[SessionRow], search: str) -> list[SessionRow]:
+def filter_rows(rows: Iterable[SessionRow], search: str) -> List[SessionRow]:
     term = search.strip().casefold()
     if not term:
         return list(rows)
@@ -275,9 +294,9 @@ def compute_column_widths(
     rows: Sequence[SessionRow],
     total_width: int,
     show_cwd: bool = False,
-    active_sort: str | None = None,
+    active_sort: Optional[str] = None,
     reverse: bool = False,
-) -> dict[str, int]:
+) -> Dict[str, int]:
     fixed = base_column_widths(rows, show_cwd=show_cwd, active_sort=active_sort, reverse=reverse)
     reserved = sum(fixed.values()) + (len(fixed) * GUTTER)
     if reserved + MIN_CONVO_WIDTH > total_width:
@@ -290,9 +309,9 @@ def compute_column_widths(
 
 
 def format_header(
-    widths: dict[str, int],
+    widths: Dict[str, int],
     show_cwd: bool = False,
-    active_sort: str | None = None,
+    active_sort: Optional[str] = None,
     reverse: bool = False,
 ) -> str:
     labels = [
@@ -308,7 +327,7 @@ def format_header(
     return (" " * GUTTER).join(labels)
 
 
-def format_row(row: SessionRow, widths: dict[str, int], show_cwd: bool = False) -> str:
+def format_row(row: SessionRow, widths: Dict[str, int], show_cwd: bool = False) -> str:
     parts = [
         pad_display(ago(row.created_at), widths["created"]),
         pad_display(ago(row.updated_at), widths["updated"]),
@@ -361,10 +380,10 @@ def read_conversation_preview(handle) -> str:
     return "(no message yet)"
 
 
-def load_sessions(cwd: str | None = None, all_cwds: bool = False) -> list[SessionRow]:
+def load_sessions(cwd: Optional[str] = None, all_cwds: bool = False) -> List[SessionRow]:
     root = session_root()
     current_cwd = os.path.realpath(cwd or os.getcwd())
-    rows: list[SessionRow] = []
+    rows: List[SessionRow] = []
     if not root.exists():
         return rows
 
@@ -432,8 +451,8 @@ def install_to_local(
     return f"Installed to {target_path}."
 
 
-def parse_version(raw: str) -> tuple[int, ...]:
-    parts: list[int] = []
+def parse_version(raw: str) -> Tuple[int, ...]:
+    parts: List[int] = []
     for item in raw.split("."):
         try:
             parts.append(int(item))
@@ -442,7 +461,7 @@ def parse_version(raw: str) -> tuple[int, ...]:
     return tuple(parts)
 
 
-def remote_version(url: str = DEFAULT_SCRIPT_URL) -> str | None:
+def remote_version(url: str = DEFAULT_SCRIPT_URL) -> Optional[str]:
     match = VERSION_RE.search(download_text(url))
     if not match:
         return None
@@ -460,7 +479,7 @@ def check_for_update(current_version: str = APP_VERSION, url: str = DEFAULT_SCRI
     return f"Running newer build: {current_version} (remote {latest})."
 
 
-def init_palette() -> dict[str, int]:
+def init_palette() -> Dict[str, int]:
     palette = {
         "title": curses.A_BOLD,
         "accent": curses.A_BOLD,
@@ -491,7 +510,7 @@ def init_palette() -> dict[str, int]:
 
 def materialize_rows(
     rows: Sequence[SessionRow], search: str, sort_key: str, reverse: bool
-) -> list[SessionRow]:
+):
     return sort_rows(filter_rows(rows, search), sort_key=sort_key, reverse=reverse)
 
 
@@ -503,7 +522,7 @@ def resume_with_terminal(session_id: str) -> int:
     return 0
 
 
-def handle_search_input(search: str, key) -> tuple[str, bool]:
+def handle_search_input(search: str, key) -> Tuple[str, bool]:
     if key == "\t":
         return search, False
     if key in ("\n", "\r", "\x1b"):
@@ -530,14 +549,14 @@ def next_sort_key(current_sort: str, step: int) -> str:
 
 def draw_header(
     stdscr,
-    widths: dict[str, int],
+    widths: Dict[str, int],
     row_y: int,
     sort_key: str,
     reverse: bool,
     show_cwd: bool,
     width: int,
     view_x: int,
-    palette: dict[str, int],
+    palette: Dict[str, int],
 ) -> None:
     fields = [
         ("created", widths["created"]),
@@ -614,7 +633,7 @@ def draw(
     show_cwd: bool,
     status: str,
     horizontal_scroll: int,
-    palette: dict[str, int],
+    palette: Dict[str, int],
 ) -> None:
     stdscr.erase()
     height, width = stdscr.getmaxyx()
@@ -674,7 +693,7 @@ def run_picker(
     sort_key: str = "updated",
     reverse: bool = True,
     show_cwd: bool = False,
-) -> str | None:
+) -> Optional[str]:
     try:
         curses.curs_set(0)
     except curses.error:
@@ -788,7 +807,7 @@ def run_picker(
 
 def launch_tui(
     rows: Sequence[SessionRow], sort_key: str = "updated", reverse: bool = True, show_cwd: bool = False
-) -> str | None:
+) -> Optional[str]:
     if shutil.which("codex") is None:
         raise RuntimeError("`codex` not found in PATH.")
     with attached_terminal():
@@ -800,7 +819,7 @@ def build_parser() -> argparse.ArgumentParser:
         prog="ls-cx-ss",
         description="List, search, sort, and resume Codex sessions from a single self-contained Python file.",
     )
-    sub = parser.add_subparsers(dest="command", required=True)
+    sub = parser.add_subparsers(dest="command")
 
     common = argparse.ArgumentParser(add_help=False)
     common.add_argument("--all-cwds", action="store_true", help="Show sessions across all working directories.")
@@ -829,21 +848,21 @@ def resolve_reverse(sort_key: str, reverse_flag: bool) -> bool:
     return sort_key in {"updated", "created"}
 
 
-def load_materialized_rows(args) -> list[SessionRow]:
+def load_materialized_rows(args) -> List[SessionRow]:
     rows = load_sessions(cwd=os.getcwd(), all_cwds=args.all_cwds)
     rows = filter_rows(rows, args.search)
     rows = sort_rows(rows, sort_key=args.sort, reverse=resolve_reverse(args.sort, args.reverse))
     return rows
 
 
-def print_table(rows: list[SessionRow], show_cwd: bool) -> None:
+def print_table(rows: List[SessionRow], show_cwd: bool) -> None:
     widths = compute_column_widths(rows, shutil.get_terminal_size((160, 24)).columns - 1, show_cwd=show_cwd)
     print(format_header(widths, show_cwd=show_cwd))
     for row in rows:
         print(format_row(row, widths, show_cwd=show_cwd))
 
 
-def print_json(rows: list[SessionRow]) -> None:
+def print_json(rows: List[SessionRow]) -> None:
     data = [
         {
             "created_at": row.created_at.isoformat(),
@@ -866,7 +885,7 @@ def resume_session(session_id: str) -> int:
     return resume_with_terminal(session_id)
 
 
-def normalize_argv(argv: list[str]) -> list[str]:
+def normalize_argv(argv: List[str]) -> List[str]:
     if not argv:
         return ["tui"]
     if argv[0] == "help":
@@ -880,11 +899,13 @@ def normalize_argv(argv: list[str]) -> list[str]:
     return argv
 
 
-def main(argv: list[str] | None = None) -> int:
+def main(argv: Optional[List[str]] = None) -> int:
     argv = normalize_argv(list(sys.argv[1:] if argv is None else argv))
 
     parser = build_parser()
     args = parser.parse_args(argv)
+    if not getattr(args, "command", None):
+        parser.error("a command is required")
 
     if args.command == "resume":
         return resume_session(args.session_id)

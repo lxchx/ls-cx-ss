@@ -1,13 +1,13 @@
 [build-system]
-requires = ["setuptools>=68"]
+requires = ["setuptools"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "ls-cx-ss"
-version = "0.3.3"
+version = "0.3.4"
 description = "List, search, sort, and resume Codex sessions across providers for the current working directory."
 readme = "README.md"
-requires-python = ">=3.9"
+requires-python = ">=3.6"
 authors = [
   {name = "lxchx"}
 ]
