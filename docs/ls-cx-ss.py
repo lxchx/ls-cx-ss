@@ -315,6 +315,7 @@ def format_header(
     show_cwd: bool = False,
     active_sort: Optional[str] = None,
     reverse: bool = False,
+    pad_last: bool = True,
 ) -> str:
     labels = [
         pad_display(header_label("created", active_sort, reverse), widths["created"]),
@@ -325,7 +326,11 @@ def format_header(
     ]
     if show_cwd:
         labels.append(pad_display(header_label("cwd", active_sort, reverse), widths["cwd"]))
-    labels.append(pad_display(header_label("conversation", active_sort, reverse), widths["conversation"]))
+    conversation_label = header_label("conversation", active_sort, reverse)
+    if pad_last:
+        labels.append(pad_display(conversation_label, widths["conversation"]))
+    else:
+        labels.append(conversation_label)
     return (" " * GUTTER).join(labels)
 
 
@@ -551,6 +556,27 @@ def resume_with_terminal(session_id: str) -> int:
     return 0
 
 
+def restart_installed_tui(
+    search: str,
+    sort_key: str,
+    reverse: bool,
+    show_cwd: bool,
+    selected_session_id: Optional[str],
+    status_message: str,
+) -> None:
+    target_path = DEFAULT_BIN_DIR / DEFAULT_COMMAND_NAME
+    argv = [str(target_path), "tui", "--sort", sort_key, "--reverse-state", "true" if reverse else "false"]
+    if show_cwd:
+        argv.append("--all-cwds")
+    if search:
+        argv.extend(["--search", search])
+    if selected_session_id:
+        argv.extend(["--select-session-id", selected_session_id])
+    if status_message:
+        argv.extend(["--status-message", status_message])
+    os.execv(str(target_path), argv)
+
+
 def handle_search_input(search: str, key) -> Tuple[str, bool]:
     if key == "\t":
         return search, False
@@ -722,6 +748,9 @@ def run_picker(
     sort_key: str = "updated",
     reverse: bool = True,
     show_cwd: bool = False,
+    initial_search: str = "",
+    initial_selected_session_id: Optional[str] = None,
+    initial_status: str = "",
 ) -> Optional[str]:
     try:
         curses.curs_set(0)
@@ -733,12 +762,19 @@ def run_picker(
     selected = 0
     scroll = 0
     horizontal_scroll = 0
-    search = ""
+    search = initial_search
     current_sort = sort_key if sort_key in SORT_KEYS else TUI_SORT_KEYS[0]
-    status = ""
+    status = initial_status
+    pending_selected_session_id = initial_selected_session_id
 
     while True:
         visible_rows = materialize_rows(rows, search, current_sort, reverse)
+        if pending_selected_session_id:
+            for index, row in enumerate(visible_rows):
+                if row.session_id == pending_selected_session_id:
+                    selected = index
+                    break
+            pending_selected_session_id = None
         if selected >= len(visible_rows):
             selected = max(0, len(visible_rows) - 1)
 
@@ -808,7 +844,23 @@ def run_picker(
             status = f"Sort direction: {'descending' if reverse else 'ascending'}."
         elif key == "I":
             try:
+                selected_session_id = visible_rows[selected].session_id if visible_rows else None
                 status = install_to_local()
+                version = installed_version()
+                if version:
+                    status = "Updated local version to {0}. Restarted into new build.".format(version)
+                try:
+                    curses.endwin()
+                except curses.error:
+                    pass
+                restart_installed_tui(
+                    search,
+                    current_sort,
+                    reverse,
+                    show_cwd,
+                    selected_session_id,
+                    status,
+                )
             except Exception as exc:
                 status = f"Install failed: {exc}"
         elif key == "U":
@@ -835,12 +887,27 @@ def run_picker(
 
 
 def launch_tui(
-    rows: Sequence[SessionRow], sort_key: str = "updated", reverse: bool = True, show_cwd: bool = False
+    rows: Sequence[SessionRow],
+    sort_key: str = "updated",
+    reverse: bool = True,
+    show_cwd: bool = False,
+    initial_search: str = "",
+    initial_selected_session_id: Optional[str] = None,
+    initial_status: str = "",
 ) -> Optional[str]:
     if shutil.which("codex") is None:
         raise RuntimeError("`codex` not found in PATH.")
     with attached_terminal():
-        return curses.wrapper(run_picker, rows, sort_key, reverse, show_cwd)
+        return curses.wrapper(
+            run_picker,
+            rows,
+            sort_key,
+            reverse,
+            show_cwd,
+            initial_search,
+            initial_selected_session_id,
+            initial_status,
+        )
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -863,7 +930,10 @@ def build_parser() -> argparse.ArgumentParser:
     list_cmd = sub.add_parser("list", parents=[common], help="Print session table.")
     list_cmd.add_argument("--json", action="store_true", help="Emit JSON instead of a table.")
 
-    sub.add_parser("tui", parents=[common], help="Open a TUI picker.")
+    tui_cmd = sub.add_parser("tui", parents=[common], help="Open a TUI picker.")
+    tui_cmd.add_argument("--select-session-id", help=argparse.SUPPRESS)
+    tui_cmd.add_argument("--reverse-state", choices=("true", "false"), help=argparse.SUPPRESS)
+    tui_cmd.add_argument("--status-message", default="", help=argparse.SUPPRESS)
 
     resume_cmd = sub.add_parser("resume", help="Resume a session by id.")
     resume_cmd.add_argument("session_id")
@@ -887,9 +957,10 @@ def load_materialized_rows(args) -> List[SessionRow]:
 def print_table(rows: List[SessionRow], show_cwd: bool) -> None:
     if sys.stdout.isatty():
         widths = compute_column_widths(rows, shutil.get_terminal_size((160, 24)).columns - 1, show_cwd=show_cwd)
+        print(format_header(widths, show_cwd=show_cwd))
     else:
         widths = full_column_widths(rows, show_cwd=show_cwd)
-    print(format_header(widths, show_cwd=show_cwd))
+        print(format_header(widths, show_cwd=show_cwd, pad_last=False))
     for row in rows:
         print(format_row(row, widths, show_cwd=show_cwd))
 
@@ -942,21 +1013,28 @@ def main(argv: Optional[List[str]] = None) -> int:
     if args.command == "resume":
         return resume_session(args.session_id)
 
-    rows = load_materialized_rows(args)
-    show_cwd = bool(args.all_cwds)
-
     if args.command == "list":
+        rows = load_materialized_rows(args)
+        show_cwd = bool(args.all_cwds)
         if args.json:
             print_json(rows)
         else:
             print_table(rows, show_cwd=show_cwd)
         return 0
 
+    show_cwd = bool(args.all_cwds)
+    reverse = resolve_reverse(args.sort, args.reverse)
+    if getattr(args, "reverse_state", None) is not None:
+        reverse = args.reverse_state == "true"
+    rows = load_sessions(cwd=os.getcwd(), all_cwds=args.all_cwds)
     session_id = launch_tui(
         rows,
         sort_key=args.sort,
-        reverse=resolve_reverse(args.sort, args.reverse),
+        reverse=reverse,
         show_cwd=show_cwd,
+        initial_search=args.search,
+        initial_selected_session_id=getattr(args, "select_session_id", None),
+        initial_status=getattr(args, "status_message", ""),
     )
     if not session_id:
         return 0

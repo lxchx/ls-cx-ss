@@ -31,7 +31,10 @@ def build_parser() -> argparse.ArgumentParser:
     list_cmd = sub.add_parser("list", parents=[common], help="Print session table.")
     list_cmd.add_argument("--json", action="store_true", help="Emit JSON instead of a table.")
 
-    sub.add_parser("tui", parents=[common], help="Open a TUI picker.")
+    tui_cmd = sub.add_parser("tui", parents=[common], help="Open a TUI picker.")
+    tui_cmd.add_argument("--select-session-id", help=argparse.SUPPRESS)
+    tui_cmd.add_argument("--reverse-state", choices=("true", "false"), help=argparse.SUPPRESS)
+    tui_cmd.add_argument("--status-message", default="", help=argparse.SUPPRESS)
 
     resume_cmd = sub.add_parser("resume", help="Resume a session by id.")
     resume_cmd.add_argument("session_id")
@@ -55,9 +58,10 @@ def materialize_rows(args) -> list:
 def print_table(rows: list, show_cwd: bool) -> None:
     if sys.stdout.isatty():
         widths = compute_column_widths(rows, shutil.get_terminal_size((160, 24)).columns - 1, show_cwd=show_cwd)
+        print(format_header(widths, show_cwd=show_cwd))
     else:
         widths = full_column_widths(rows, show_cwd=show_cwd)
-    print(format_header(widths, show_cwd=show_cwd))
+        print(format_header(widths, show_cwd=show_cwd, pad_last=False))
     for row in rows:
         print(format_row(row, widths, show_cwd=show_cwd))
 
@@ -110,21 +114,28 @@ def main(argv: Optional[List[str]] = None) -> int:
     if args.command == "resume":
         return resume_session(args.session_id)
 
-    rows = materialize_rows(args)
-    show_cwd = bool(args.all_cwds)
-
     if args.command == "list":
+        rows = materialize_rows(args)
+        show_cwd = bool(args.all_cwds)
         if args.json:
             print_json(rows)
         else:
             print_table(rows, show_cwd=show_cwd)
         return 0
 
+    show_cwd = bool(args.all_cwds)
+    reverse = resolve_reverse(args.sort, args.reverse)
+    if getattr(args, "reverse_state", None) is not None:
+        reverse = args.reverse_state == "true"
+    rows = load_sessions(cwd=os.getcwd(), all_cwds=args.all_cwds)
     session_id = launch_tui(
         rows,
         sort_key=args.sort,
-        reverse=resolve_reverse(args.sort, args.reverse),
+        reverse=reverse,
         show_cwd=show_cwd,
+        initial_search=args.search,
+        initial_selected_session_id=getattr(args, "select_session_id", None),
+        initial_status=getattr(args, "status_message", ""),
     )
     if not session_id:
         return 0

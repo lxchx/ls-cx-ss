@@ -166,6 +166,7 @@ def format_header(
     show_cwd: bool = False,
     active_sort: Optional[str] = None,
     reverse: bool = False,
+    pad_last: bool = True,
 ) -> str:
     labels = [
         pad_display(header_label("created", active_sort, reverse), widths["created"]),
@@ -176,7 +177,11 @@ def format_header(
     ]
     if show_cwd:
         labels.append(pad_display(header_label("cwd", active_sort, reverse), widths["cwd"]))
-    labels.append(pad_display(header_label("conversation", active_sort, reverse), widths["conversation"]))
+    conversation_label = header_label("conversation", active_sort, reverse)
+    if pad_last:
+        labels.append(pad_display(conversation_label, widths["conversation"]))
+    else:
+        labels.append(conversation_label)
     return (" " * GUTTER).join(labels)
 
 
