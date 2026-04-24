@@ -9,6 +9,7 @@ import shutil
 import sys
 import time
 import stat
+import subprocess
 import urllib.request
 import unicodedata
 from contextlib import contextmanager
@@ -25,7 +26,7 @@ KEY_ESC = 27
 KEY_TAB = 9
 KEY_BACKSPACE_CODES = {curses.KEY_BACKSPACE, 127, 8}
 TUI_SORT_KEYS = ("updated", "created")
-APP_VERSION = "0.3.4"
+APP_VERSION = "0.3.5"
 DEFAULT_SCRIPT_URL = "https://lxchx.github.io/ls-cx-ss/ls-cx-ss.py"
 DEFAULT_BIN_DIR = Path("~/.local/bin").expanduser()
 VERSION_RE = re.compile(r'APP_VERSION = "([^"]+)"|__version__ = "([^"]+)"')
@@ -427,8 +428,14 @@ def load_sessions(cwd: Optional[str] = None, all_cwds: bool = False) -> List[Ses
 
 
 def download_text(url: str) -> str:
-    with urllib.request.urlopen(url, timeout=30) as response:
-        return response.read().decode("utf-8")
+    try:
+        with urllib.request.urlopen(url, timeout=30) as response:
+            return response.read().decode("utf-8")
+    except Exception:
+        curl = shutil.which("curl")
+        if not curl:
+            raise
+        return subprocess.check_output([curl, "-fsSL", url]).decode("utf-8")
 
 
 def ensure_executable(path: Path) -> None:

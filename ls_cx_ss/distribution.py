@@ -1,6 +1,8 @@
 import os
 import re
+import shutil
 import stat
+import subprocess
 import urllib.request
 from pathlib import Path
 from typing import List, Optional, Tuple
@@ -13,8 +15,14 @@ VERSION_RE = re.compile(r'APP_VERSION = "([^"]+)"|__version__ = "([^"]+)"')
 
 
 def download_text(url: str) -> str:
-    with urllib.request.urlopen(url, timeout=30) as response:
-        return response.read().decode("utf-8")
+    try:
+        with urllib.request.urlopen(url, timeout=30) as response:
+            return response.read().decode("utf-8")
+    except Exception:
+        curl = shutil.which("curl")
+        if not curl:
+            raise
+        return subprocess.check_output([curl, "-fsSL", url]).decode("utf-8")
 
 
 def ensure_executable(path: Path) -> None:
