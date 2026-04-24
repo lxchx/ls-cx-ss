@@ -10,14 +10,17 @@ from ls_cx_ss import __version__
 from ls_cx_ss.distribution import check_for_update, install_to_local
 from ls_cx_ss.model import SessionRow
 from ls_cx_ss.query import SORT_KEYS, filter_rows, sort_rows
-from ls_cx_ss.render import GUTTER, compute_column_widths, format_row, header_label, pad_display, truncate_display
+from ls_cx_ss.render import GUTTER, compute_column_widths, display_width, format_row, header_label, pad_display, truncate_display
 
 KEY_ESC = 27
+KEY_TAB = 9
+KEY_BACKSPACE_CODES = {curses.KEY_BACKSPACE, 127, 8}
 
 
 @contextmanager
 def attached_terminal():
-    if os.isatty(0) and os.isatty(1):
+    missing_fds = [fd for fd in (0, 1, 2) if not os.isatty(fd)]
+    if not missing_fds:
         yield
         return
 
@@ -26,45 +29,46 @@ def attached_terminal():
     except OSError as exc:
         raise RuntimeError("This command needs an interactive terminal.") from exc
 
-    saved_stdin = os.dup(0)
-    saved_stdout = os.dup(1)
-    saved_stderr = os.dup(2)
+    saved_fds: dict[int, int] = {}
     try:
-        os.dup2(tty_fd, 0)
-        os.dup2(tty_fd, 1)
-        os.dup2(tty_fd, 2)
+        for fd in missing_fds:
+            saved_fds[fd] = os.dup(fd)
+            os.dup2(tty_fd, fd)
         yield
     finally:
-        os.dup2(saved_stdin, 0)
-        os.dup2(saved_stdout, 1)
-        os.dup2(saved_stderr, 2)
-        os.close(saved_stdin)
-        os.close(saved_stdout)
-        os.close(saved_stderr)
+        for fd, saved_fd in saved_fds.items():
+            os.dup2(saved_fd, fd)
+            os.close(saved_fd)
         os.close(tty_fd)
 
 
-def prompt_input(stdscr, label: str, initial: str = "") -> str:
-    height, width = stdscr.getmaxyx()
+def init_palette() -> dict[str, int]:
+    palette = {
+        "title": curses.A_BOLD,
+        "accent": curses.A_BOLD,
+        "muted": curses.A_DIM,
+        "header": curses.A_BOLD,
+        "header_active": curses.A_BOLD | curses.A_UNDERLINE,
+        "selected": curses.A_REVERSE | curses.A_BOLD,
+        "status": curses.A_DIM,
+    }
     try:
-        curses.curs_set(1)
+        curses.start_color()
+        curses.use_default_colors()
+        curses.init_pair(1, curses.COLOR_CYAN, -1)
+        curses.init_pair(2, curses.COLOR_MAGENTA, -1)
+        curses.init_pair(3, curses.COLOR_WHITE, -1)
     except curses.error:
-        pass
-    curses.echo()
-    try:
-        stdscr.move(height - 1, 0)
-        stdscr.clrtoeol()
-        prompt = f"{label}{initial}"
-        stdscr.addnstr(height - 1, 0, prompt, width - 1)
-        stdscr.refresh()
-        typed = stdscr.getstr(height - 1, len(label), max(1, width - len(label) - 1))
-        return typed.decode("utf-8", errors="replace")
-    finally:
-        curses.noecho()
-        try:
-            curses.curs_set(0)
-        except curses.error:
-            pass
+        return palette
+
+    palette["title"] = curses.color_pair(1) | curses.A_BOLD
+    palette["accent"] = curses.color_pair(2) | curses.A_BOLD
+    palette["muted"] = curses.color_pair(3) | curses.A_DIM
+    palette["header"] = curses.color_pair(3) | curses.A_BOLD
+    palette["header_active"] = curses.color_pair(2) | curses.A_BOLD
+    palette["selected"] = curses.A_REVERSE | curses.A_BOLD
+    palette["status"] = curses.color_pair(3)
+    return palette
 
 
 def materialize_rows(
@@ -81,6 +85,24 @@ def resume_with_terminal(session_id: str) -> int:
     return 0
 
 
+def handle_search_input(search: str, key) -> tuple[str, bool]:
+    if key == "\t":
+        return search, False
+    if key in ("\n", "\r", "\x1b"):
+        return search, False
+    if key in ("\b", "\x7f"):
+        return search[:-1], True
+    if key == "\x15":
+        return "", True
+    if isinstance(key, str) and key.isprintable():
+        return search + key, True
+    return search, False
+
+
+def sort_label(key: str, reverse: bool) -> str:
+    return header_label(key, key, reverse).replace(" ↑", "").replace(" ↓", "")
+
+
 def draw_header(
     stdscr,
     widths: dict[str, int],
@@ -89,6 +111,7 @@ def draw_header(
     reverse: bool,
     show_cwd: bool,
     width: int,
+    palette: dict[str, int],
 ) -> None:
     fields = [
         ("created", widths["created"]),
@@ -107,9 +130,9 @@ def draw_header(
         if remaining <= 0:
             break
         label = pad_display(header_label(key, sort_key, reverse), cell_width)
-        attr = curses.A_BOLD
+        attr = palette["header"]
         if key == sort_key:
-            attr |= curses.A_REVERSE
+            attr = palette["header_active"]
         safe_addnstr(stdscr, row_y, x, label, remaining, attr)
         x += cell_width
         if idx != len(fields) - 1:
@@ -146,19 +169,27 @@ def draw(
     reverse: bool,
     show_cwd: bool,
     status: str,
+    palette: dict[str, int],
 ) -> None:
     stdscr.erase()
     height, width = stdscr.getmaxyx()
-    title = f"ls-cx-ss v{__version__}  cwd={os.getcwd()}  rows={len(visible_rows)}/{len(all_rows)}"
-    hint = f"/ search  s sort  r reverse  i install  u update  Enter resume  q/Esc quit"
-    safe_addnstr(stdscr, 0, 0, title, width - 1, curses.A_BOLD)
-    meta_row = 1
-    if status:
-        safe_addnstr(stdscr, meta_row, 0, status, width - 1)
-        meta_row += 1
-    if search:
-        safe_addnstr(stdscr, meta_row, 0, f"search: {search}", width - 1)
-        meta_row += 1
+    title = "Resume a previous session"
+    current_sort_label = header_label(sort_key, sort_key, reverse)
+    search_label = f"Search: {search}" if search else "Type to search"
+    footer = "enter resume  esc quit  tab sort  R reverse  I install  U update  ↑/↓ browse"
+
+    safe_addnstr(stdscr, 0, 0, title, width - 1, palette["title"])
+    sort_x = min(width - 1, display_width(title) + 2)
+    safe_addnstr(stdscr, 0, sort_x, "Sort: ", max(0, width - 1 - sort_x), palette["muted"])
+    safe_addnstr(
+        stdscr,
+        0,
+        sort_x + len("Sort: "),
+        current_sort_label,
+        max(0, width - 1 - sort_x - len("Sort: ")),
+        palette["accent"],
+    )
+    safe_addnstr(stdscr, 1, 0, search_label, width - 1, palette["muted"] if not search else palette["accent"])
 
     widths = compute_column_widths(
         visible_rows or all_rows,
@@ -167,17 +198,21 @@ def draw(
         active_sort=sort_key,
         reverse=reverse,
     )
-    draw_header(stdscr, widths, meta_row, sort_key, reverse, show_cwd, width - 1)
+    header_row = 2
+    draw_header(stdscr, widths, header_row, sort_key, reverse, show_cwd, width - 1, palette)
 
-    list_top = meta_row + 1
-    list_height = max(1, height - list_top - 1)
+    list_top = header_row + 1
+    list_height = max(1, height - list_top - 2)
     for idx, row in enumerate(visible_rows[scroll : scroll + list_height]):
-        attr = curses.A_REVERSE if scroll + idx == selected else curses.A_NORMAL
+        attr = palette["selected"] if scroll + idx == selected else curses.A_NORMAL
         safe_addnstr(stdscr, list_top + idx, 0, format_row(row, widths, show_cwd=show_cwd), width - 1, attr)
-    safe_addnstr(stdscr, height - 1, 0, hint, width - 1)
+    if not visible_rows:
+        empty = "No matching sessions." if search else "No sessions found."
+        safe_addnstr(stdscr, list_top, 0, empty, width - 1, palette["muted"])
+    if status:
+        safe_addnstr(stdscr, height - 2, 0, status, width - 1, palette["status"])
+    safe_addnstr(stdscr, height - 1, 0, footer, width - 1, palette["muted"])
     stdscr.refresh()
-
-
 def run_picker(
     stdscr,
     rows: Sequence[SessionRow],
@@ -190,12 +225,13 @@ def run_picker(
     except curses.error:
         pass
     stdscr.keypad(True)
+    palette = init_palette()
 
     selected = 0
     scroll = 0
     search = ""
     sort_index = SORT_KEYS.index(sort_key) if sort_key in SORT_KEYS else 0
-    status = "Ready. Enter resumes the selected session."
+    status = ""
 
     while True:
         current_sort = SORT_KEYS[sort_index]
@@ -204,8 +240,7 @@ def run_picker(
             selected = max(0, len(visible_rows) - 1)
 
         height, _ = stdscr.getmaxyx()
-        meta_rows = 2 + (1 if status else 0) + (1 if search else 0)
-        list_height = max(1, height - meta_rows - 1)
+        list_height = max(1, height - 5)
         if selected < scroll:
             scroll = selected
         elif selected >= scroll + list_height:
@@ -222,14 +257,15 @@ def run_picker(
             reverse,
             show_cwd,
             status,
+            palette,
         )
 
-        key = stdscr.getch()
-        if key in (ord("q"), KEY_ESC):
+        key = stdscr.get_wch()
+        if key in ("\x1b", KEY_ESC):
             return None
-        if key in (curses.KEY_UP, ord("k")):
+        if key == curses.KEY_UP:
             selected = max(0, selected - 1)
-        elif key in (curses.KEY_DOWN, ord("j")):
+        elif key == curses.KEY_DOWN:
             selected = min(max(0, len(visible_rows) - 1), selected + 1)
         elif key == curses.KEY_PPAGE:
             selected = max(0, selected - list_height)
@@ -239,34 +275,45 @@ def run_picker(
             selected = 0
         elif key == curses.KEY_END:
             selected = max(0, len(visible_rows) - 1)
-        elif key == ord("/"):
-            search = prompt_input(stdscr, "search> ", initial=search)
-            selected = 0
-            scroll = 0
-            status = f"Filtered rows with search={search!r}." if search else "Cleared search filter."
-        elif key == ord("s"):
+        elif key in ("\t", KEY_TAB):
             sort_index = (sort_index + 1) % len(SORT_KEYS)
             selected = 0
             scroll = 0
-            status = f"Sorted by {SORT_KEYS[sort_index]}."
-        elif key == ord("r"):
+            status = f"Sorted by {sort_label(SORT_KEYS[sort_index], reverse)}."
+        elif key == curses.KEY_BTAB:
+            sort_index = (sort_index - 1) % len(SORT_KEYS)
+            selected = 0
+            scroll = 0
+            status = f"Sorted by {sort_label(SORT_KEYS[sort_index], reverse)}."
+        elif key == "R":
             reverse = not reverse
             selected = 0
             scroll = 0
             status = f"Sort direction: {'descending' if reverse else 'ascending'}."
-        elif key == ord("i"):
+        elif key == "I":
             try:
                 status = install_to_local()
             except Exception as exc:
                 status = f"Install failed: {exc}"
-        elif key == ord("u"):
+        elif key == "U":
             try:
                 status = check_for_update()
             except Exception as exc:
                 status = f"Update check failed: {exc}"
-        elif key in (10, 13, curses.KEY_ENTER):
+        elif key in ("\n", "\r", curses.KEY_ENTER):
             if visible_rows:
                 return resume_with_terminal(visible_rows[selected].session_id)
+        elif key in KEY_BACKSPACE_CODES:
+            search = search[:-1]
+            selected = 0
+            scroll = 0
+            status = ""
+        else:
+            search, changed = handle_search_input(search, key)
+            if changed:
+                selected = 0
+                scroll = 0
+                status = ""
 
 
 def launch_tui(
