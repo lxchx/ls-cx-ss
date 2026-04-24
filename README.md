@@ -30,6 +30,31 @@ chmod +x ./ls-cx-ss
 
 The packaged and single-file entry points are intended to run on Python 3.6+.
 
+## Development
+
+The source of truth now lives under `ls_cx_ss/`.
+
+- `ls_cx_ss/`: package-style source modules used during development
+- `./ls-cx-ss`: generated single-file entry for local direct execution
+- `docs/ls-cx-ss.py`: generated single-file entry published through GitHub Pages
+
+The two single-file outputs are generated from the package sources by:
+
+```bash
+python3 scripts/build_single_file.py
+```
+
+The current generator uses a small loader approach:
+
+- it reads each module under `ls_cx_ss/`
+- embeds those module sources into one file as strings
+- bootstraps them into `sys.modules`
+- then calls `ls_cx_ss.cli.main()`
+
+So if you want to change behavior, edit `ls_cx_ss/` first, then regenerate the
+single-file outputs. Do not hand-edit `./ls-cx-ss` or `docs/ls-cx-ss.py`
+unless you are debugging the generator itself.
+
 ## GitHub Pages URL usage
 
 The project also supports GitHub Pages distribution, so you can use it directly from a URL:
